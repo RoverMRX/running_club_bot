@@ -2,58 +2,69 @@ import asyncio
 import logging
 import sys
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command
-from sqlalchemy import select
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-from config import config
-from models import Base, User
-from database import engine, async_session
-from keyboards import get_main_kb
-import handlers
+import config
+from database import init_db
+from handlers import router, send_weekly_digest
 
-logging.basicConfig(level=logging.INFO)
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-async def cmd_start(message: types.Message):
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.tg_id == message.from_user.id))
-        user = result.scalar_one_or_none()
-
-        if not user:
-            new_user = User(
-                tg_id=message.from_user.id,
-                username=message.from_user.username,
-                full_name=message.from_user.full_name
-            )
-            session.add(new_user)
-            await session.commit()
-            text = f"Привет, {message.from_user.first_name}! Ты в системе."
-        else:
-            text = f"С возвращением, {message.from_user.first_name}!"
-
-    await message.answer(text, reply_markup=get_main_kb())
 
 async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stdout,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
     await init_db()
-    bot_session = AiohttpSession(proxy=config.PROXY_URL)
-    bot = Bot(token=config.BOT_TOKEN, session=bot_session, default=DefaultBotProperties(parse_mode="HTML"))
-    dp = Dispatcher()
 
-    # Регистрация
-    dp.message.register(cmd_start, Command("start"))
-    dp.include_router(handlers.router)
+    session = AiohttpSession(proxy=config.PROXY_URL) if config.PROXY_URL else None
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
-    print(f"🚀 Бот @{(await bot.get_me()).username} запущен!")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(router)
+
+    # ----------------------------------------------------------------
+    # Планировщик:
+    #   Каждое воскресенье в 21:00 (МСК, UTC+3) — еженедельный дайджест.
+    #   Вместе с этим сбрасываются счётчики за неделю и обновляются стрики.
+    # ----------------------------------------------------------------
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    scheduler.add_job(
+        send_weekly_digest,
+        trigger=CronTrigger(day_of_week="sun", hour=21, minute=0),
+        args=[bot],
+        id="weekly_digest",
+        replace_existing=True,
+    )
+    scheduler.start()
+
+    print("🚀 IT БЕГОТНЯ 21 — бот запущен!")
+    if config.GROUP_ID:
+        print(f"   Группа: {config.GROUP_ID}")
+    print(f"   Админы: {config.ADMIN_IDS}")
+    print(f"   Дайджест: каждое воскресенье в 21:00 МСК")
+
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    finally:
+        scheduler.shutdown()
+        await bot.session.close()
+
 
 if __name__ == "__main__":
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
