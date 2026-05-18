@@ -12,7 +12,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 import config
 from database import init_db
-from handlers import router, send_weekly_digest
 
 
 async def main():
@@ -31,29 +30,22 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
+    # Импортируем хендлеры и сервисы (после инициализации бота)
+    from handlers import router
+    from services.scheduler import setup_scheduler
+
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # ----------------------------------------------------------------
-    # Планировщик:
-    #   Каждое воскресенье в 21:00 (МСК, UTC+3) — еженедельный дайджест.
-    #   Вместе с этим сбрасываются счётчики за неделю и обновляются стрики.
-    # ----------------------------------------------------------------
+    # Планировщик
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
-    scheduler.add_job(
-        send_weekly_digest,
-        trigger=CronTrigger(day_of_week="sun", hour=21, minute=0),
-        args=[bot],
-        id="weekly_digest",
-        replace_existing=True,
-    )
+    setup_scheduler(scheduler, bot)
     scheduler.start()
 
     print("🚀 IT БЕГОТНЯ 21 — бот запущен!")
     if config.GROUP_ID:
         print(f"   Группа: {config.GROUP_ID}")
     print(f"   Админы: {config.ADMIN_IDS}")
-    print(f"   Дайджест: каждое воскресенье в 21:00 МСК")
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
