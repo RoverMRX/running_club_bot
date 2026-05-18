@@ -47,20 +47,36 @@ def get_registration_cancel_kb() -> ReplyKeyboardMarkup:
 
 
 # ─── Создание челленджа ───
-def get_challenge_type_kb() -> ReplyKeyboardMarkup:
-    """Выбор типа челленджа."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📜 Регулярный (X раз в неделю)")],
-            [KeyboardButton(text="🎯 Дневной спринт (N км за день)")],
-            [KeyboardButton(text="📅 Недельный спринт (N км за неделю)")],
-            [KeyboardButton(text="📆 Месячный спринт (N км за месяц)")],
-            [KeyboardButton(text="🏃 Разовый забег (N км за время)")],
-            [KeyboardButton(text="♾️ Открытый челлендж (без даты)")],
-            [KeyboardButton(text="❌ Отмена")],
-        ],
-        resize_keyboard=True,
-    )
+def get_challenge_type_inline_kb() -> InlineKeyboardMarkup:
+    """Выбор типа челленджа — inline, всё в одном сообщении."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📜 Регулярный",       callback_data="ch_type:weekly_runs")
+    builder.button(text="🎯 Дневной спринт",   callback_data="ch_type:daily_km")
+    builder.button(text="📅 Недельный спринт", callback_data="ch_type:weekly_km")
+    builder.button(text="📆 Месячный спринт",  callback_data="ch_type:monthly_km")
+    builder.button(text="🏃 Разовый забег",    callback_data="ch_type:race")
+    builder.button(text="❌ Отмена",            callback_data="ch_type:cancel")
+    # 1 кнопка в ряд — читабельно на мобиле
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_confirm_inline_kb() -> InlineKeyboardMarkup:
+    """Подтверждение создания челленджа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, создать", callback_data="ch_confirm:yes")
+    builder.button(text="❌ Отменить",    callback_data="ch_confirm:no")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_end_date_inline_kb() -> InlineKeyboardMarkup:
+    """Выбор режима даты окончания для регулярного челленджа."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Указать дату", callback_data="ch_end:set")
+    builder.button(text="♾️ Бессрочный",   callback_data="ch_end:open")
+    builder.adjust(2)
+    return builder.as_markup()
 
 
 # ─── Отчёты (P2P голосование + админ апрув) ───
@@ -201,4 +217,130 @@ def get_noop_kb() -> InlineKeyboardMarkup:
     """Пустая кнопка (noop) для отключения интерактивности."""
     builder = InlineKeyboardBuilder()
     builder.button(text=" ", callback_data="noop")
+    return builder.as_markup()
+
+
+def get_challenge_link_kb(report_id: int, challenges: list) -> InlineKeyboardMarkup:
+    """
+    Кнопки привязки отчёта к челленджу.
+
+    Показывается сразу после подачи отчёта, если у пользователя
+    есть активные подходящие челленджи.
+
+    callback_data: link_ch:{report_id}:{challenge_id}
+    Последняя кнопка — «Не привязывать» (challenge_id = 0).
+    """
+    from services.challenges import get_type_name  # локальный импорт — избегаем цикла
+
+    builder = InlineKeyboardBuilder()
+    for ch in challenges:
+        label = f"{get_type_name(ch.ch_type)}: {ch.title}"
+        # Обрезаем до 60 символов — ограничение Telegram на текст кнопки
+        if len(label) > 60:
+            label = label[:57] + "…"
+        builder.button(
+            text=label,
+            callback_data=f"link_ch:{report_id}:{ch.id}",
+        )
+    builder.button(
+        text="➡️ Не привязывать",
+        callback_data=f"link_ch:{report_id}:0",
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+# ─── Отчёты: голосование (для всех бегунов) ───
+
+def get_report_vote_kb(report_id: int, pos: int = 0, neg: int = 0) -> InlineKeyboardMarkup:
+    """
+    Кнопки голосования для всех участников.
+    Счётчики обновляются при каждом голосе через edit_reply_markup.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"✅ Засчитать ({pos})",
+            callback_data=f"vote_yes:{report_id}",
+        ),
+        InlineKeyboardButton(
+            text=f"❌ Фейк ({neg})",
+            callback_data=f"vote_no:{report_id}",
+        ),
+    )
+    return builder.as_markup()
+
+
+# ─── Отчёты: кнопки для админа/модера (в личку) ───
+
+def get_report_admin_kb(report_id: int) -> InlineKeyboardMarkup:
+    """
+    Кнопки мгновенного апрув/реджект для админов и модераторов.
+    Отправляются в личку, не в группу.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="👑 Одобрить",
+            callback_data=f"adm_approve:{report_id}",
+        ),
+        InlineKeyboardButton(
+            text="🚫 Отклонить",
+            callback_data=f"adm_reject:{report_id}",
+        ),
+    )
+    return builder.as_markup()
+
+
+# ─── Отчёты: финальные состояния ───
+
+def get_report_approved_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="✅ Отчёт принят", callback_data="noop"))
+    return builder.as_markup()
+
+
+def get_report_rejected_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="❌ Отчёт отклонён", callback_data="noop"))
+    return builder.as_markup()
+
+
+# ─── Мульти-выбор челленджей для привязки к отчёту ───
+
+def get_challenge_link_kb(
+    report_id: int,
+    challenges: list,
+    selected: set[int] | None = None,
+) -> InlineKeyboardMarkup:
+    """
+    Кнопки мульти-выбора челленджей.
+
+    Каждая кнопка тогглится: ✅ = выбран, ➕ = не выбран.
+    Внизу кнопка «Готово» — фиксирует выбор и переходит к голосованию.
+
+    callback_data кнопок: toggle_ch:{report_id}:{challenge_id}
+    callback_data «Готово»: link_done:{report_id}
+    """
+    from services.challenges import get_type_name  # локальный импорт — избегаем цикла
+
+    if selected is None:
+        selected = set()
+
+    builder = InlineKeyboardBuilder()
+    for ch in challenges:
+        is_selected = ch.id in selected
+        prefix = "✅" if is_selected else "➕"
+        label = f"{prefix} {get_type_name(ch.ch_type)}: {ch.title}"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        builder.button(
+            text=label,
+            callback_data=f"toggle_ch:{report_id}:{ch.id}",
+        )
+
+    builder.button(
+        text="✔️ Готово",
+        callback_data=f"link_done:{report_id}",
+    )
+    builder.adjust(1)
     return builder.as_markup()

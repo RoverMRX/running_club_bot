@@ -3,15 +3,14 @@ services/challenges.py — бизнес-логика челленджей.
 
 Типы челленджей (ch_type):
   weekly_runs  — регулярный: N пробежек/неделю, условие зачёта км и/или минуты
-  daily_km     — дневной спринт: N км за один день
-  weekly_km    — недельный спринт: N км за неделю
-  monthly_km   — месячный спринт: N км за месяц
+  daily_km     — дневной спринт: N км за один день  (deadline = старт + 1 день)
+  weekly_km    — недельный спринт: N км за неделю   (deadline = старт + 7 дней)
+  monthly_km   — месячный спринт: N км за месяц     (deadline = старт + 30 дней)
   race         — разовый забег: N км за время T
-  open         — открытый: без дедлайна, закрывается вручную через P2P
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
@@ -27,13 +26,30 @@ CH_TYPE_NAMES = {
     "weekly_km":   "📅 Недельный спринт",
     "monthly_km":  "📆 Месячный спринт",
     "race":        "🏃 Разовый забег",
-    "open":        "♾️ Открытый",
+}
+
+# Автоматический срок для спринтов (в днях)
+_SPRINT_DAYS = {
+    "daily_km":   1,
+    "weekly_km":  7,
+    "monthly_km": 30,
 }
 
 
 def get_type_name(ch_type: str) -> str:
     """Человекочитаемое название типа челленджа."""
     return CH_TYPE_NAMES.get(ch_type, ch_type)
+
+
+def _calc_deadline(ch_type: str, started_at: datetime) -> datetime | None:
+    """
+    Автоматически рассчитывает deadline для спринтов.
+    Для остальных типов возвращает None (deadline задаётся вручную или отсутствует).
+    """
+    days = _SPRINT_DAYS.get(ch_type)
+    if days is not None:
+        return started_at + timedelta(days=days)
+    return None
 
 
 async def create_challenge(
@@ -54,9 +70,19 @@ async def create_challenge(
     """
     Создаёт челлендж.
 
+    Для спринтов (daily_km, weekly_km, monthly_km) deadline вычисляется
+    автоматически от started_at и переданное значение deadline игнорируется.
+
     Returns:
         Созданный Challenge (отсоединённый от сессии).
     """
+    started_at = started_at or datetime.now()
+
+    # Для спринтов всегда считаем deadline сами, игнорируем переданный
+    auto_deadline = _calc_deadline(ch_type, started_at)
+    if auto_deadline is not None:
+        deadline = auto_deadline
+
     async with async_session() as session:
         async with session.begin():
             ch = Challenge(
@@ -71,7 +97,7 @@ async def create_challenge(
                 penalty=penalty,
                 is_public=is_public,
                 is_active=True,
-                started_at=started_at or datetime.now(),
+                started_at=started_at,
                 deadline=deadline,
             )
             session.add(ch)
@@ -314,7 +340,7 @@ async def pause_challenge(challenge_id: int, until: datetime) -> bool:
 
 
 async def close_challenge(challenge_id: int) -> bool:
-    """Завершить челлендж вручную (для open-типа или досрочно)."""
+    """Завершить челлендж вручную (досрочно)."""
     async with async_session() as session:
         async with session.begin():
             res = await session.execute(

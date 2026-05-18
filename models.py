@@ -28,28 +28,28 @@ class User(Base):
     __tablename__ = "users"
 
     id               = Column(Integer,    primary_key=True)
-    tg_id            = Column(BigInteger, unique=True, nullable=False)  # Telegram chat ID
-    username         = Column(String,     nullable=True)                 # @username из Telegram
-    full_name        = Column(String,     nullable=True)                 # Имя и фамилия
-    school_nick      = Column(String,     unique=True, nullable=False)   # @school_nick из школы 21
+    tg_id            = Column(BigInteger, unique=True, nullable=False)
+    username         = Column(String,     nullable=True)
+    full_name        = Column(String,     nullable=True)
+    school_nick      = Column(String,     unique=True, nullable=False)
 
-    xp               = Column(Integer, default=0)         # Общий XP (не сбрасывается)
-    level            = Column(Integer, default=0)         # Level = xp // 100
-    season_xp        = Column(Integer, default=0)         # Квартальный XP (сбрасывается каждый квартал)
-    streak           = Column(Integer, default=0)         # Недели подряд без пропусков
-    last_week_closed = Column(DateTime, nullable=True)    # Когда последний раз закрыли неделю
+    xp               = Column(Integer, default=0)
+    level            = Column(Integer, default=0)
+    season_xp        = Column(Integer, default=0)
+    streak           = Column(Integer, default=0)
+    last_week_closed = Column(DateTime, nullable=True)
 
     created_at       = Column(DateTime, default=datetime.now)
     updated_at       = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     # Связи
-    challenges               = relationship("Challenge",              back_populates="owner",        lazy="selectin")
-    challenge_participations = relationship("ChallengeParticipant",  back_populates="user",         lazy="selectin")
-    reports                  = relationship("Report",                 back_populates="user",         lazy="selectin")
-    personal_record          = relationship("PersonalRecord",         back_populates="user",         uselist=False, lazy="selectin")
-    event_participations     = relationship("EventParticipant",       back_populates="user",         lazy="selectin")
+    challenges                = relationship("Challenge",             back_populates="owner",        lazy="selectin")
+    challenge_participations  = relationship("ChallengeParticipant", back_populates="user",         lazy="selectin")
+    reports                   = relationship("Report",                back_populates="user",         lazy="selectin")
+    personal_record           = relationship("PersonalRecord",        back_populates="user",         uselist=False, lazy="selectin")
+    event_participations      = relationship("EventParticipant",      back_populates="user",         lazy="selectin")
     tournament_participations = relationship("TournamentParticipant", back_populates="user",         lazy="selectin")
-    team_memberships         = relationship("TeamMember",             back_populates="user",         lazy="selectin")
+    team_memberships          = relationship("TeamMember",            back_populates="user",         lazy="selectin")
 
 
 class Moderator(Base):
@@ -59,7 +59,7 @@ class Moderator(Base):
     id        = Column(Integer,    primary_key=True)
     tg_id     = Column(BigInteger, unique=True, nullable=False)
     username  = Column(String,     nullable=True)
-    added_by  = Column(BigInteger, nullable=False)   # tg_id админа, который добавил
+    added_by  = Column(BigInteger, nullable=False)
     added_at  = Column(DateTime,   default=datetime.now)
 
 
@@ -70,41 +70,37 @@ class Moderator(Base):
 class Challenge(Base):
     """
     Челлендж пользователя.
-    ch_type: "weekly_runs" | "daily_km" | "weekly_km" | "monthly_km" | "race" | "open"
+    ch_type: "weekly_runs" | "daily_km" | "weekly_km" | "monthly_km" | "race"
     """
     __tablename__ = "challenges"
 
     id            = Column(Integer,    primary_key=True)
     user_id       = Column(BigInteger, ForeignKey("users.tg_id"), nullable=False)
     title         = Column(String,     nullable=False)
-    ch_type       = Column(String,     nullable=False)   # Тип челленджа
+    ch_type       = Column(String,     nullable=False)
 
-    # Параметры в зависимости от типа
-    min_per_run        = Column(Float,   default=0.0)    # Мин. км за 1 тренировку (0 = не требуется)
-    min_minutes_per_run = Column(Integer, default=0)     # Мин. минут за 1 тренировку (0 = не требуется)
-    goal_runs          = Column(Integer, default=0)      # Раз в неделю (weekly_runs)
-    goal_value         = Column(Float,   default=0.0)    # Суммарно км (weekly_km, monthly_km, race)
-    goal_time          = Column(Integer, nullable=True)  # Время в минутах — лимит (race)
+    min_per_run         = Column(Float,   default=0.0)
+    min_minutes_per_run = Column(Integer, default=0)
+    goal_runs           = Column(Integer, default=0)
+    goal_value          = Column(Float,   default=0.0)
+    goal_time           = Column(Integer, nullable=True)
 
-    # Текущий прогресс
     current_value = Column(Float,   default=0.0)
     current_runs  = Column(Integer, default=0)
-    current_time  = Column(Integer, default=0)           # Минуты
+    current_time  = Column(Integer, default=0)
 
-    # Параметры
-    penalty       = Column(Text,    nullable=True)       # "Цена слова"
-    is_public     = Column(Boolean, default=True)        # Можно ли присоединиться
+    penalty       = Column(Text,    nullable=True)
+    is_public     = Column(Boolean, default=True)
     is_active     = Column(Boolean, default=True)
 
-    # Сроки
     started_at    = Column(DateTime, nullable=True)
-    deadline      = Column(DateTime, nullable=True)      # Null = открытый челлендж
-    pause_until   = Column(DateTime, nullable=True)      # На паузе до даты (админ)
+    deadline      = Column(DateTime, nullable=True)
+    pause_until   = Column(DateTime, nullable=True)
 
     created_at    = Column(DateTime, default=datetime.now)
 
-    owner        = relationship("User",                  back_populates="challenges")
-    participants = relationship("ChallengeParticipant",  back_populates="challenge", lazy="selectin")
+    owner        = relationship("User",                 back_populates="challenges")
+    participants = relationship("ChallengeParticipant", back_populates="challenge", lazy="selectin")
 
 
 class ChallengeParticipant(Base):
@@ -112,8 +108,8 @@ class ChallengeParticipant(Base):
     __tablename__ = "challenge_participants"
 
     id            = Column(Integer,    primary_key=True)
-    challenge_id  = Column(Integer,    ForeignKey("challenges.id"),  nullable=False)
-    user_id       = Column(BigInteger, ForeignKey("users.tg_id"),    nullable=False)
+    challenge_id  = Column(Integer,    ForeignKey("challenges.id"), nullable=False)
+    user_id       = Column(BigInteger, ForeignKey("users.tg_id"),   nullable=False)
     joined_at     = Column(DateTime,   default=datetime.now)
 
     current_value = Column(Float,   default=0.0)
@@ -139,15 +135,17 @@ class Report(Base):
     id           = Column(Integer,    primary_key=True)
     message_id   = Column(Integer,    unique=True, nullable=False)
     chat_id      = Column(BigInteger, nullable=False)
-    thread_id    = Column(Integer,    nullable=True)     # ID топика
+    thread_id    = Column(Integer,    nullable=True)
 
     user_tg_id   = Column(BigInteger, ForeignKey("users.tg_id"), nullable=False)
     km           = Column(Float,   nullable=False)
     duration_min = Column(Integer, nullable=True)
 
-    report_type  = Column(String, default="training")    # "training" | "event"
-    event_id     = Column(Integer, ForeignKey("events.id"), nullable=True)
-    challenge_id = Column(Integer, ForeignKey("challenges.id"), nullable=True)
+    report_type   = Column(String,  default="training")   # "training" | "event"
+    event_id      = Column(Integer, ForeignKey("events.id"),             nullable=True)
+    # challenge_id оставлен для совместимости (одиночная привязка, например для race-отчёта).
+    # Для мульти-привязки используй таблицу report_challenges.
+    challenge_id  = Column(Integer, ForeignKey("challenges.id"),         nullable=True)
     tournament_id = Column(Integer, ForeignKey("weekly_tournaments.id"), nullable=True)
 
     is_approved  = Column(Boolean, default=False)
@@ -156,11 +154,41 @@ class Report(Base):
 
     created_at   = Column(DateTime, default=datetime.now)
 
-    user      = relationship("User",  back_populates="reports")
-    votes     = relationship("Vote",  back_populates="report",  lazy="selectin")
-    event     = relationship("Event", back_populates="reports", foreign_keys=[event_id])
-    challenge = relationship("Challenge")
+    user       = relationship("User",                back_populates="reports")
+    votes      = relationship("Vote",                back_populates="report",    lazy="selectin")
+    event      = relationship("Event",               back_populates="reports",   foreign_keys=[event_id])
+    challenge  = relationship("Challenge",           foreign_keys=[challenge_id])
     tournament = relationship("WeeklyTournament")
+
+    # Мульти-привязка к челленджам
+    report_challenges = relationship(
+        "ReportChallenge",
+        back_populates="report",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class ReportChallenge(Base):
+    """
+    Связь отчёт ↔ челлендж (многие-ко-многим).
+
+    Один отчёт может быть засчитан сразу в несколько челленджей.
+    Например: тренировка идёт и в weekly_runs, и в race одновременно.
+    """
+    __tablename__ = "report_challenges"
+
+    id           = Column(Integer, primary_key=True)
+    report_id    = Column(Integer, ForeignKey("reports.id",    ondelete="CASCADE"), nullable=False)
+    challenge_id = Column(Integer, ForeignKey("challenges.id", ondelete="CASCADE"), nullable=False)
+    linked_at    = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("report_id", "challenge_id", name="uq_report_challenge"),
+    )
+
+    report    = relationship("Report",    back_populates="report_challenges")
+    challenge = relationship("Challenge")
 
 
 class Vote(Base):
@@ -170,6 +198,7 @@ class Vote(Base):
     id          = Column(Integer,    primary_key=True)
     report_id   = Column(Integer,    ForeignKey("reports.id"), nullable=False)
     voter_tg_id = Column(BigInteger, nullable=False)
+    is_negative = Column(Boolean,    default=False)   # False = засчитать, True = фейк
     voted_at    = Column(DateTime,   default=datetime.now)
 
     __table_args__ = (
@@ -208,7 +237,7 @@ class EventTemplate(Base):
     description       = Column(Text,       nullable=True)
     rules             = Column(Text,       nullable=True)
     registration_info = Column(Text,       nullable=True)
-    is_external       = Column(Boolean,    default=False)   # True = мы гости
+    is_external       = Column(Boolean,    default=False)
     xp_bonus          = Column(Integer,    default=100)
     xp_multiplier     = Column(Float,      default=1.5)
     is_active         = Column(Boolean,    default=True)
@@ -236,13 +265,13 @@ class Event(Base):
     xp_bonus      = Column(Integer, default=100)
     xp_multiplier = Column(Float,   default=1.5)
 
-    announce_msg_id = Column(Integer, nullable=True)   # В основной группе
-    repost_msg_id   = Column(Integer, nullable=True)   # В школьной группе
+    announce_msg_id = Column(Integer, nullable=True)
+    repost_msg_id   = Column(Integer, nullable=True)
 
     template     = relationship("EventTemplate",    back_populates="events")
-    participants = relationship("EventParticipant", back_populates="event",   lazy="selectin")
+    participants = relationship("EventParticipant", back_populates="event",  lazy="selectin")
     reports      = relationship("Report",           back_populates="event",
-                                foreign_keys="Report.event_id",              lazy="selectin")
+                                foreign_keys="Report.event_id",             lazy="selectin")
 
 
 class EventParticipant(Base):
@@ -250,9 +279,9 @@ class EventParticipant(Base):
     __tablename__ = "event_participants"
 
     id            = Column(Integer,    primary_key=True)
-    event_id      = Column(Integer,    ForeignKey("events.id"),    nullable=False)
-    user_tg_id    = Column(BigInteger, ForeignKey("users.tg_id"),  nullable=False)
-    status        = Column(String,     default="going")            # "going" | "not_going"
+    event_id      = Column(Integer,    ForeignKey("events.id"),   nullable=False)
+    user_tg_id    = Column(BigInteger, ForeignKey("users.tg_id"), nullable=False)
+    status        = Column(String,     default="going")           # "going" | "not_going"
     registered_at = Column(DateTime,   default=datetime.now)
 
     __table_args__ = (
@@ -298,8 +327,8 @@ class TournamentParticipant(Base):
         UniqueConstraint("tournament_id", "user_tg_id", name="uq_tournament_participant"),
     )
 
-    tournament = relationship("WeeklyTournament",     back_populates="participants")
-    user       = relationship("User",                 back_populates="tournament_participations")
+    tournament = relationship("WeeklyTournament", back_populates="participants")
+    user       = relationship("User",             back_populates="tournament_participations")
 
 
 # ────────────────────────────────────────────
