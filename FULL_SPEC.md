@@ -429,7 +429,7 @@ Level = total_xp // 100
 
 ## 9. Модуль 7: Еженедельный дайджест
 
-Публикуется автоматически каждое воскресенье в 21:00 МСК в топик DIGEST_THREAD_ID.
+Публикуется автоматически каждое воскресенье в 21:00 по времени Asia/Omsk в топик DIGEST_THREAD_ID.
 
 ### Содержание дайджеста
 
@@ -568,6 +568,7 @@ XP_PR_BONUS=50
 | streak | Integer | Недели подряд |
 | last_week_closed | DateTime | Когда закрыли неделю |
 | created_at | DateTime | Дата регистрации |
+| updated_at | DateTime | Дата последнего обновления |
 
 ### Таблица moderators
 | Поле | Тип | Описание |
@@ -625,12 +626,23 @@ XP_PR_BONUS=50
 | duration_min | Integer | Длительность в минутах |
 | report_type | String | "training" или "event" |
 | event_id | Integer FK→events.id | |
-| challenge_id | Integer FK→challenges.id | |
+| challenge_id | Integer FK→challenges.id | Одиночная привязка (для совместимости / race) |
 | tournament_id | Integer FK→weekly_tournaments.id | |
 | is_approved | Boolean | |
 | is_rejected | Boolean | |
 | rejected_by | BigInteger | |
 | created_at | DateTime | |
+
+### Таблица report_challenges
+| Поле | Тип | Описание |
+|---|---|---|
+| id | Integer PK | |
+| report_id | Integer FK→reports.id CASCADE | |
+| challenge_id | Integer FK→challenges.id CASCADE | |
+| linked_at | DateTime | Когда привязан |
+| UNIQUE(report_id, challenge_id) | | |
+
+> Один отчёт может быть засчитан в несколько челленджей одновременно. Привязка происходит через эту таблицу. Поле `challenge_id` в `reports` оставлено для обратной совместимости.
 
 ### Таблица votes
 | Поле | Тип | Описание |
@@ -638,8 +650,11 @@ XP_PR_BONUS=50
 | id | Integer PK | |
 | report_id | Integer FK→reports.id | |
 | voter_tg_id | BigInteger | |
+| is_negative | Boolean | False = засчитать, True = фейк |
 | voted_at | DateTime | |
 | UNIQUE(report_id, voter_tg_id) | | |
+
+> Голосование честное в обе стороны: VOTES_REQUIRED положительных → одобрение, VOTES_REQUIRED отрицательных → отклонение.
 
 ### Таблица personal_records
 | Поле | Тип | Описание |
@@ -732,7 +747,6 @@ XP_PR_BONUS=50
 | user_tg_id | BigInteger FK→users.tg_id | |
 | joined_at | DateTime | |
 | UNIQUE(team_id, user_tg_id) | | |
-
 ---
 
 ## 13. Статус реализации
@@ -740,8 +754,8 @@ XP_PR_BONUS=50
 | Модуль | Статус | Что готово | Что осталось |
 |---|---|---|---|
 | Регистрация | ✅ Готово | FSM, профиль, таблица лидеров | — |
-| Челленджи | 🔧 80% | 5 типов, сервис, FSM, присоединение | Правка логики дат |
-| Отчёты | ❌ Не начато | — | services + handlers |
+| Челленджи | ✅ Готово | 5 типов, сервис, FSM, присоединение | Правка логики дат |
+| Отчёты | ✅ Готово | — | services + handlers |
 | Мероприятия | ❌ Не начато | — | services + handlers + шаблоны + анонсы |
 | Турниры | ❌ Не начато | — | services + handlers + финализация |
 | Лидеры | 🔧 50% | All-time таблица | Сезонная таблица |

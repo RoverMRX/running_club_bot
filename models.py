@@ -1,12 +1,5 @@
 """
 models.py — схема базы данных IT БЕГОТНЯ 21.
-
-Хранение данных:
-  - tg_id: НЕ шифруем (primary key, нужен для Telegram API)
-  - school_nick: НЕ шифруем (отображаем в таблице лидеров: @school_nick)
-  - username: НЕ шифруем (для упоминания @username)
-  - full_name: НЕ шифруем (для отображения в профиле)
-  - xp, level, streak: НЕ шифруем (игровые данные)
 """
 
 from datetime import datetime
@@ -42,7 +35,6 @@ class User(Base):
     created_at       = Column(DateTime, default=datetime.now)
     updated_at       = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-    # Связи
     challenges                = relationship("Challenge",             back_populates="owner",        lazy="selectin")
     challenge_participations  = relationship("ChallengeParticipant", back_populates="user",         lazy="selectin")
     reports                   = relationship("Report",                back_populates="user",         lazy="selectin")
@@ -53,7 +45,7 @@ class User(Base):
 
 
 class Moderator(Base):
-    """Модераторы могут апрувить/отклонять отчёты."""
+    """Модераторы могут апрувить/отклонять отчёты и публиковать мероприятия."""
     __tablename__ = "moderators"
 
     id        = Column(Integer,    primary_key=True)
@@ -68,10 +60,6 @@ class Moderator(Base):
 # ────────────────────────────────────────────
 
 class Challenge(Base):
-    """
-    Челлендж пользователя.
-    ch_type: "weekly_runs" | "daily_km" | "weekly_km" | "monthly_km" | "race"
-    """
     __tablename__ = "challenges"
 
     id            = Column(Integer,    primary_key=True)
@@ -104,7 +92,6 @@ class Challenge(Base):
 
 
 class ChallengeParticipant(Base):
-    """Участник чужого челленджа."""
     __tablename__ = "challenge_participants"
 
     id            = Column(Integer,    primary_key=True)
@@ -129,7 +116,6 @@ class ChallengeParticipant(Base):
 # ────────────────────────────────────────────
 
 class Report(Base):
-    """Отчёт о тренировке."""
     __tablename__ = "reports"
 
     id           = Column(Integer,    primary_key=True)
@@ -141,10 +127,8 @@ class Report(Base):
     km           = Column(Float,   nullable=False)
     duration_min = Column(Integer, nullable=True)
 
-    report_type   = Column(String,  default="training")   # "training" | "event"
+    report_type   = Column(String,  default="training")
     event_id      = Column(Integer, ForeignKey("events.id"),             nullable=True)
-    # challenge_id оставлен для совместимости (одиночная привязка, например для race-отчёта).
-    # Для мульти-привязки используй таблицу report_challenges.
     challenge_id  = Column(Integer, ForeignKey("challenges.id"),         nullable=True)
     tournament_id = Column(Integer, ForeignKey("weekly_tournaments.id"), nullable=True)
 
@@ -160,7 +144,6 @@ class Report(Base):
     challenge  = relationship("Challenge",           foreign_keys=[challenge_id])
     tournament = relationship("WeeklyTournament")
 
-    # Мульти-привязка к челленджам
     report_challenges = relationship(
         "ReportChallenge",
         back_populates="report",
@@ -170,12 +153,6 @@ class Report(Base):
 
 
 class ReportChallenge(Base):
-    """
-    Связь отчёт ↔ челлендж (многие-ко-многим).
-
-    Один отчёт может быть засчитан сразу в несколько челленджей.
-    Например: тренировка идёт и в weekly_runs, и в race одновременно.
-    """
     __tablename__ = "report_challenges"
 
     id           = Column(Integer, primary_key=True)
@@ -192,13 +169,12 @@ class ReportChallenge(Base):
 
 
 class Vote(Base):
-    """Голос за отчёт."""
     __tablename__ = "votes"
 
     id          = Column(Integer,    primary_key=True)
     report_id   = Column(Integer,    ForeignKey("reports.id"), nullable=False)
     voter_tg_id = Column(BigInteger, nullable=False)
-    is_negative = Column(Boolean,    default=False)   # False = засчитать, True = фейк
+    is_negative = Column(Boolean,    default=False)
     voted_at    = Column(DateTime,   default=datetime.now)
 
     __table_args__ = (
@@ -213,7 +189,6 @@ class Vote(Base):
 # ────────────────────────────────────────────
 
 class PersonalRecord(Base):
-    """Лучшая дистанция за одну тренировку."""
     __tablename__ = "personal_records"
 
     id         = Column(Integer,    primary_key=True)
@@ -229,12 +204,17 @@ class PersonalRecord(Base):
 # ────────────────────────────────────────────
 
 class EventTemplate(Base):
-    """Шаблон мероприятия."""
+    """
+    Шаблон мероприятия — хранит всё кроме даты.
+    При создании мероприятия по шаблону меняется только event_date.
+    """
     __tablename__ = "event_templates"
 
     id                = Column(Integer,    primary_key=True)
     name              = Column(String,     nullable=False)
     description       = Column(Text,       nullable=True)
+    location          = Column(String,     nullable=True)   # место проведения
+    distance_km       = Column(Float,      nullable=True)   # дистанция
     rules             = Column(Text,       nullable=True)
     registration_info = Column(Text,       nullable=True)
     is_external       = Column(Boolean,    default=False)
@@ -260,6 +240,8 @@ class Event(Base):
     distance_km   = Column(Float,      nullable=True)
     created_by    = Column(BigInteger, nullable=False)
     is_active     = Column(Boolean,    default=True)
+    # Статус модерации: True = ждёт публикации, False = уже опубликовано/отклонено
+    is_pending    = Column(Boolean,    default=True)
     created_at    = Column(DateTime,   default=datetime.now)
 
     xp_bonus      = Column(Integer, default=100)
@@ -275,13 +257,12 @@ class Event(Base):
 
 
 class EventParticipant(Base):
-    """Участие в мероприятии."""
     __tablename__ = "event_participants"
 
     id            = Column(Integer,    primary_key=True)
     event_id      = Column(Integer,    ForeignKey("events.id"),   nullable=False)
     user_tg_id    = Column(BigInteger, ForeignKey("users.tg_id"), nullable=False)
-    status        = Column(String,     default="going")           # "going" | "not_going"
+    status        = Column(String,     default="going")
     registered_at = Column(DateTime,   default=datetime.now)
 
     __table_args__ = (
@@ -297,12 +278,11 @@ class EventParticipant(Base):
 # ────────────────────────────────────────────
 
 class WeeklyTournament(Base):
-    """Недельный турнир."""
     __tablename__ = "weekly_tournaments"
 
     id               = Column(Integer,    primary_key=True)
     title            = Column(String,     nullable=False)
-    tournament_type  = Column(String,     nullable=False)  # "km" | "minutes" | "days" | "team_km"
+    tournament_type  = Column(String,     nullable=False)
     start_date       = Column(DateTime,   nullable=False)
     end_date         = Column(DateTime,   nullable=False)
     is_active        = Column(Boolean,    default=True)
@@ -314,7 +294,6 @@ class WeeklyTournament(Base):
 
 
 class TournamentParticipant(Base):
-    """Участник турнира."""
     __tablename__ = "tournament_participants"
 
     id            = Column(Integer,    primary_key=True)
@@ -336,7 +315,6 @@ class TournamentParticipant(Base):
 # ────────────────────────────────────────────
 
 class Team(Base):
-    """Команда для командных турниров."""
     __tablename__ = "teams"
 
     id         = Column(Integer,    primary_key=True)
@@ -349,7 +327,6 @@ class Team(Base):
 
 
 class TeamMember(Base):
-    """Участник команды."""
     __tablename__ = "team_members"
 
     id         = Column(Integer,    primary_key=True)

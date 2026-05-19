@@ -11,8 +11,8 @@ import config
 from database import async_session
 from models import User
 from keyboards import (
-    get_main_kb, get_cancel_kb, get_registration_start_kb,
-    get_admin_main_kb
+    get_main_kb, get_main_kb_with_admin, get_cancel_kb,
+    get_registration_start_kb, get_admin_main_kb
 )
 from services import users as users_service
 
@@ -23,6 +23,17 @@ log = logging.getLogger(__name__)
 def is_admin(user_id: int) -> bool:
     """Проверка администратор."""
     return user_id in config.ADMIN_IDS
+
+
+async def main_kb_for(user_id: int):
+    """Возвращает нужную клавиатуру главного меню в зависимости от роли."""
+    from services.events import is_moderator
+    if is_admin(user_id):
+        return get_main_kb_with_admin()
+    async with async_session() as session:
+        if await is_moderator(session, user_id):
+            return get_main_kb_with_admin()
+    return get_main_kb()
 
 
 # ─────────────────────────────────────────
@@ -53,7 +64,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await message.answer(
             f"👋 Привет, <b>{user.school_nick}</b>!\n\n"
             f"Добро пожаловать обратно в <b>IT БЕГОТНЯ 21</b> 🏃",
-            reply_markup=get_main_kb(),
+            reply_markup=await main_kb_for(message.from_user.id),
         )
     else:
         # Первый раз в боте
@@ -194,7 +205,7 @@ async def registration_full_name(message: types.Message, state: FSMContext):
         f"   Школьный ник: <b>{school_nick}</b>\n"
         f"   Имя: <b>{full_name or message.from_user.full_name or 'не указано'}</b>\n\n"
         f"Теперь ты можешь создавать челленджи, отчитываться и участвовать в турнирах! 🏃",
-        reply_markup=get_main_kb(),
+        reply_markup=await main_kb_for(message.from_user.id),
     )
 
 
@@ -351,14 +362,14 @@ async def cmd_admin(message: types.Message):
 @router.message(F.text == "⬅️ Главное меню")
 async def back_to_main(message: types.Message):
     """Вернуться в главное меню."""
-    await message.answer("Вернулись в главное меню.", reply_markup=get_main_kb())
+    await message.answer("Вернулись в главное меню.", reply_markup=await main_kb_for(message.from_user.id))
 
 
 @router.message(F.text == "❌ Отмена")
 async def msg_cancel(message: types.Message, state: FSMContext):
     """Отмена и выход из FSM."""
     await state.clear()
-    await message.answer("Отменено.", reply_markup=get_main_kb())
+    await message.answer("Отменено.", reply_markup=await main_kb_for(message.from_user.id))
 
 
 # ─────────────────────────────────────────
