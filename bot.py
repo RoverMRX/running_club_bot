@@ -1,3 +1,10 @@
+"""
+bot.py — точка входа IT БЕГОТНЯ 21.
+
+Запускает polling + APScheduler.
+Планировщик работает в часовом поясе Asia/Omsk (UTC+6).
+"""
+
 import asyncio
 import logging
 import sys
@@ -8,13 +15,12 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 import config
 from database import init_db
 
 
-async def main():
+async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stdout,
@@ -23,6 +29,7 @@ async def main():
 
     await init_db()
 
+    # ── Бот ─────────────────────────────────────────────────────────
     session = AiohttpSession(proxy=config.PROXY_URL) if config.PROXY_URL else None
     bot = Bot(
         token=config.BOT_TOKEN,
@@ -30,15 +37,15 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Импортируем хендлеры и сервисы (после инициализации бота)
+    # ── Роутеры ─────────────────────────────────────────────────────
     from handlers import router
     from services.scheduler import setup_scheduler
 
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # Планировщик
-    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    # ── Планировщик (Asia/Omsk) ──────────────────────────────────────
+    scheduler = AsyncIOScheduler(timezone="Asia/Omsk")
     setup_scheduler(scheduler, bot)
     scheduler.start()
 
@@ -46,6 +53,7 @@ async def main():
     if config.GROUP_ID:
         print(f"   Группа: {config.GROUP_ID}")
     print(f"   Админы: {config.ADMIN_IDS}")
+    print(f"   Часовой пояс планировщика: Asia/Omsk")
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)

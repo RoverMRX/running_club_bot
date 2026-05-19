@@ -20,6 +20,10 @@ async def init_db() -> None:
         "ALTER TABLE event_templates ADD COLUMN distance_km REAL",
         # Event: флаг ожидания модерации
         "ALTER TABLE events ADD COLUMN is_pending BOOLEAN DEFAULT 1",
+        # vote_message_id — для снятия кнопок после апрува
+        "ALTER TABLE reports ADD COLUMN vote_message_id INTEGER",
+        # tournament_id уже есть в модели, но мог быть создан без него
+        "ALTER TABLE reports ADD COLUMN tournament_id_v2 INTEGER",  # noqa: не нужна, просто guard
     ]
 
     async with async_session() as session:

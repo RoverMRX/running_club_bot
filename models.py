@@ -132,6 +132,7 @@ class Report(Base):
     challenge_id  = Column(Integer, ForeignKey("challenges.id"),         nullable=True)
     tournament_id = Column(Integer, ForeignKey("weekly_tournaments.id"), nullable=True)
 
+    vote_message_id = Column(Integer, nullable=True)  # ID vote-сообщения в чате
     is_approved  = Column(Boolean, default=False)
     is_rejected  = Column(Boolean, default=False)
     rejected_by  = Column(BigInteger, nullable=True)

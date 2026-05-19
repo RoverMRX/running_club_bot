@@ -332,9 +332,10 @@ async def approve_report(report_id: int) -> dict:
                 total_xp += config.XP_PR_BONUS
 
             report.is_approved = True
-            user_tg_id = report.user_tg_id
-            km = report.km
-            duration_min = report.duration_min
+            user_tg_id    = report.user_tg_id
+            km            = report.km
+            duration_min  = report.duration_min
+            tournament_id = report.tournament_id
             await session.flush()
 
     challenge_result = await update_on_report(
@@ -342,6 +343,11 @@ async def approve_report(report_id: int) -> dict:
         km=km,
         minutes=duration_min,
     )
+
+    # Обновляем очки турнира если отчёт к нему привязан
+    if tournament_id:
+        from services.tournaments import update_score as tour_update_score
+        await tour_update_score(tournament_id, user_tg_id, km, duration_min)
 
     return {
         'ok': True,
@@ -352,6 +358,7 @@ async def approve_report(report_id: int) -> dict:
         'is_pr': is_pr,
         'updated': challenge_result['updated'],
         'completed': challenge_result['completed'],
+        'tournament_id': tournament_id,
     }
 
 

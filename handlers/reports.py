@@ -198,12 +198,20 @@ async def handle_report(message: types.Message, bot: Bot):
         )
         return
 
+    # Привязываем к активному турниру если есть
+    from services.tournaments import get_active_tournament, is_participant
+    active_tour = await get_active_tournament()
+    tour_id = None
+    if active_tour and await is_participant(active_tour.id, message.from_user.id):
+        tour_id = active_tour.id
+
     report = await create_report(
         user_tg_id=message.from_user.id,
         km=km,
         message_id=message.message_id,
         chat_id=message.chat.id,
         thread_id=message.message_thread_id,
+        tournament_id=tour_id,
     )
 
     name = (
@@ -238,12 +246,13 @@ async def handle_report(message: types.Message, bot: Bot):
         )
     else:
         # Нет ни мероприятий ни челленджей — сразу голосование
-        await message.reply(
+        vote_msg = await message.reply(
             f"{header}\n\n"
             f"Нужно <b>{config.VOTES_REQUIRED}</b> голоса для одобрения.",
             reply_markup=get_report_vote_kb(report.id, pos=0, neg=0),
             parse_mode="HTML",
         )
+        await _save_vote_msg(report.id, vote_msg.message_id)
 
     await _notify_admins(bot, report.id, name, km)
 
@@ -407,6 +416,8 @@ async def cb_rep_done(callback: types.CallbackQuery):
             reply_markup=get_report_vote_kb(report_id, pos=0, neg=0),
             parse_mode="HTML",
         )
+        # Сохраняем ID этого сообщения — оно стало vote-сообщением
+        await _save_vote_msg(report_id, callback.message.message_id)
     except TelegramBadRequest:
         pass
 
@@ -431,6 +442,8 @@ async def cb_vote_yes(callback: types.CallbackQuery, bot: Bot):
     if result['approved']:
         ap = await approve_report(report_id)
         await _notify_athlete(bot, ap)
+        await _notify_group_approved(bot, ap)
+        # vote-сообщение — это и есть callback.message, кнопки уберёт edit_text ниже
         try:
             await callback.message.edit_text(
                 callback.message.text.split("\n\nНужно")[0] +
@@ -502,6 +515,8 @@ async def cb_admin_approve(callback: types.CallbackQuery, bot: Bot):
         return await callback.answer(ap['reason'])
 
     await _notify_athlete(bot, ap)
+    await _notify_group_approved(bot, ap)
+    await _clear_vote_buttons(bot, report_id)
 
     try:
         await callback.message.edit_text(
@@ -551,6 +566,75 @@ async def cb_noop(callback: types.CallbackQuery):
 # ──────────────────────────────────────────────────────────────────────────────
 # Вспомогательные функции
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+async def _notify_group_approved(bot: Bot, ap: dict) -> None:
+    """Публикует уведомление об одобренном отчёте в general чат группы."""
+    if not config.GROUP_ID or not ap.get('ok') or not ap.get('user_tg_id'):
+        return
+    from sqlalchemy import select as sa_select
+    from models import User as UserModel
+    async with async_session() as session:
+        u_res = await session.execute(
+            sa_select(UserModel).where(UserModel.tg_id == ap['user_tg_id'])
+        )
+        user = u_res.scalar_one_or_none()
+    name = f"@{user.username}" if user and user.username else (
+        user.school_nick if user else str(ap['user_tg_id'])
+    )
+    pr_str = " 🎯 <b>Личный рекорд!</b>" if ap.get('is_pr') else ""
+    tour_str = ""
+    if ap.get('tournament_id'):
+        from services.tournaments import get_tournament, get_leaderboard
+        tour = await get_tournament(ap['tournament_id'])
+        if tour:
+            lb = await get_leaderboard(tour.id, limit=3)
+            lb_lines = []
+            medals = ["🥇", "🥈", "🥉"]
+            for row in lb:
+                u = row["user"]
+                n = f"@{u.username}" if u and u.username else (u.school_nick if u else "?")
+                lb_lines.append(f"{medals[row['position']-1]} {n} — {row['score']:.1f} км")
+            tour_str = (
+                f"\n\n🏆 <b>{tour.title}</b> — текущий топ:\n" + "\n".join(lb_lines)
+            )
+    try:
+        await bot.send_message(
+            config.GROUP_ID,
+            f"✅ <b>{name}</b> — отчёт принят: <b>{ap['km']} км</b> · +{ap['xp']} XP{pr_str}{tour_str}",
+        )
+    except Exception as e:
+        log.debug("Уведомление в группу не отправлено: %s", e)
+
+
+async def _save_vote_msg(report_id: int, vote_message_id: int) -> None:
+    """Сохраняет message_id vote-сообщения в БД для последующего снятия кнопок."""
+    async with async_session() as session:
+        r_res = await session.execute(select(Report).where(Report.id == report_id))
+        report = r_res.scalar_one_or_none()
+        if report:
+            report.vote_message_id = vote_message_id
+            await session.commit()
+
+
+async def _clear_vote_buttons(bot: Bot, report_id: int) -> None:
+    """Убирает кнопки голосования с vote-сообщения после апрува/реджекта."""
+    async with async_session() as session:
+        r_res = await session.execute(select(Report).where(Report.id == report_id))
+        report = r_res.scalar_one_or_none()
+        if not report or not report.vote_message_id:
+            return
+        chat_id = report.chat_id
+        vote_msg_id = report.vote_message_id
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=vote_msg_id,
+            reply_markup=get_report_approved_kb(),
+        )
+    except Exception as e:
+        log.debug("Не удалось обновить vote-сообщение: %s", e)
+
 
 async def _notify_admins(bot: Bot, report_id: int, athlete_name: str, km: float) -> None:
     admin_ids = list(config.ADMIN_IDS)
