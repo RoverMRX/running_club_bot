@@ -1,0 +1,240 @@
+/* ── Тёмная тема, строгий минимализм ── */
+
+:root {
+  --bg:          #0f0f0f;
+  --bg-card:     #1a1a1a;
+  --bg-input:    #242424;
+  --border:      rgba(255,255,255,0.08);
+  --text:        #f0f0f0;
+  --text-muted:  #888;
+  --text-dim:    #555;
+  --accent:      #e0e0e0;
+  --accent-dim:  #333;
+  --danger:      #c0392b;
+  --success:     #27ae60;
+  --warning:     #d68910;
+  --nav-height:  58px;
+  --radius:      10px;
+  --gap:         10px;
+}
+
+/* Переопределяем Telegram-переменные на тёмные */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 100vh;
+  overscroll-behavior: none;
+}
+
+#root { width: 100%; min-height: 100vh; }
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 16px calc(var(--nav-height) + 20px);
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ── Карточка ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: var(--gap);
+}
+
+/* ── Кнопки ── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 11px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  letter-spacing: 0.01em;
+}
+.btn:active  { opacity: 0.7; }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-primary   { background: var(--text);    color: var(--bg); }
+.btn-secondary { background: var(--bg-input); color: var(--text); border: 1px solid var(--border); }
+.btn-danger    { background: var(--danger);   color: #fff; }
+.btn-success   { background: var(--success);  color: #fff; }
+
+/* ── Типографика ── */
+h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 18px; }
+h2 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+h3 { font-size: 14px; font-weight: 600; }
+
+.hint { color: var(--text-muted); font-size: 13px; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: var(--accent-dim);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.badge-active  { background: var(--success); color: #fff; border-color: transparent; }
+.badge-pending { background: var(--warning); color: #fff; border-color: transparent; }
+.badge-done    { color: var(--text-dim); }
+
+/* ── Прогресс-бар ── */
+.progress-wrap {
+  background: var(--accent-dim);
+  border-radius: 4px;
+  height: 4px;
+  overflow: hidden;
+  margin: 6px 0 2px;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--text);
+  transition: width 0.4s ease;
+}
+
+/* ── Разделитель ── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 12px 0;
+}
+
+/* ── Табы ── */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+.tab {
+  flex: 1;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tab.active {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+/* ── Пагинация ── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+.pagination button {
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity 0.15s;
+}
+.pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+.page-info { font-size: 13px; color: var(--text-muted); }
+
+/* ── Форма ── */
+.form-group { margin-bottom: 14px; }
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.form-group input::placeholder,
+.form-group textarea::placeholder { color: var(--text-dim); }
+.form-group input:focus,
+.form-group textarea:focus { border-color: rgba(255,255,255,0.25); }
+.form-group textarea { min-height: 80px; resize: vertical; }
+
+/* ── Строка списка ── */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.list-row:last-child { border-bottom: none; }
+
+/* ── Ошибка / пусто ── */
+.empty-state {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-muted);
+}
+.empty-state .empty-icon {
+  font-size: 36px;
+  margin-bottom: 10px;
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.empty-state .empty-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
