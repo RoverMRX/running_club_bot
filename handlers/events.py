@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from aiogram.enums import ChatType
 from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
@@ -15,7 +16,6 @@ from sqlalchemy import select
 import config
 from database import async_session
 from keyboards import (
-    get_events_menu_kb,
     get_cancel_kb,
     get_event_moderation_kb,
     get_event_participants_kb,
@@ -41,6 +41,7 @@ from services.events import (
 )
 
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 
 # ── FSM ──────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ def _templates_inline_kb(templates: list) -> object:
 
 # ── «📅 Мероприятия» — список ────────────────────────────────
 
-@router.message(F.text == "📋 Ближайшие мероприятия")
+@router.message(F.text == "📅 Мероприятия")
 async def cmd_events_list(message: Message) -> None:
     async with async_session() as session:
         events = await get_upcoming_events(session)
@@ -185,7 +186,7 @@ async def cb_event_members(callback: CallbackQuery) -> None:
 
 # ── Создание мероприятия ──────────────────────────────────────
 
-@router.message(F.text == "➕ Создать мероприятие")
+@router.message(F.text == "📅 Создать мероприятие")
 async def cmd_create_event_start(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
         templates = await get_templates(session)
@@ -433,6 +434,29 @@ async def _notify_mods_about_pending(bot: Bot, event) -> None:
 
 
 # ── Мероприятия на модерации ──────────────────────────────────
+
+@router.message(F.text == "🕐 Мероприятия на модерации")
+async def cmd_pending_events(message: Message) -> None:
+    if not await _is_admin_or_mod(message.from_user.id):
+        await message.answer("Недостаточно прав.")
+        return
+
+    async with async_session() as session:
+        events = await get_pending_events(session)
+
+    if not events:
+        await message.answer("Мероприятий на модерации нет. ✅")
+        return
+
+    await message.answer(f"🕐 На модерации: {len(events)} шт.")
+    for event in events:
+        await message.answer(
+            f"Создал: ID <code>{event.created_by}</code>\n\n{format_announce(event)}",
+            reply_markup=get_event_moderation_kb(event.id),
+        )
+
+
+# ── Публикация в основную группу ─────────────────────────────
 
 @router.callback_query(F.data.startswith("evt_pub_main:"))
 async def cb_publish_main(callback: CallbackQuery) -> None:

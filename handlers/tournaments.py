@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 
+from aiogram.enums import ChatType
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -45,6 +46,7 @@ from services.tournaments import (
 
 log = logging.getLogger(__name__)
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 
 def _is_admin(user_id: int) -> bool:

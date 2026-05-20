@@ -2,5 +2,67 @@
 *.env
 *.zip
 tech_task.md
-__pycache__/
 it_run.db
+# ─── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Виртуальные окружения
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ─── База данных ──────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Секреты ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Логи ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Node.js / Frontend ───────────────────────────────────────
+node_modules/
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+webapp/frontend/build/
+webapp/frontend/.vite/
+.npm/
+
+# ─── IDE ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Docker ───────────────────────────────────────────────────
+# (docker-compose.yml и Dockerfile коммитим, игнорируем только мусор)
+.docker/
+
+# ─── Pytest / Coverage ────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ─── Временные файлы ──────────────────────────────────────────
+*.tmp
+*.bak
+*.orig

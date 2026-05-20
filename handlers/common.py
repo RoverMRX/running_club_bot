@@ -1,6 +1,7 @@
 """handlers/common.py — базовые команды: /start, профиль, лидеры, помощь."""
 
 import logging
+from aiogram.enums import ChatType
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -12,12 +13,12 @@ from database import async_session
 from models import User
 from keyboards import (
     get_main_kb, get_main_kb_with_admin, get_cancel_kb,
-    get_registration_start_kb, get_admin_main_kb,
-    get_challenges_menu_kb, get_events_menu_kb,
+    get_registration_start_kb, get_admin_main_kb
 )
 from services import users as users_service
 
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 log = logging.getLogger(__name__)
 
 
@@ -307,22 +308,21 @@ async def cmd_help(message: types.Message):
         "❓ <b>Как пользоваться IT БЕГОТНЯ 21</b>\n\n"
 
         "<b>📸 Отчёт о тренировке:</b>\n"
-        "Напиши в топике Отчёты (фото необязательно):\n"
+        "Пришли фото (скриншот трекера) с подписью:\n"
         "<code>#отчет 7.5</code>\n"
-        "Дистанция — первой строкой, описание — ниже.\n\n"
+        "(где 7.5 — дистанция в км)\n\n"
 
         f"Нужно <b>{config.VOTES_REQUIRED} голоса</b> других участников или одобрение админа.\n\n"
 
         "<b>🎯 Челленджи:</b>\n"
-        "• Кнопка <b>🎯 Челленджи</b> → подменю\n"
-        "• 🏃 Создать — новый челлендж (5 типов)\n"
-        "• 🤝 Челленджи клуба — список других участников, можно присоединиться\n"
-        "• 📋 Мои челленджи — твои активные с прогрессом\n\n"
+        "• /create_challenge — создать новый челлендж\n"
+        "• 6 типов: регулярный, дневной спринт, недельный, месячный, разовый забег, открытый\n"
+        "• Присоединяйся к публичным челленджам друзей\n\n"
 
         "<b>📅 Мероприятия:</b>\n"
-        "• Кнопка <b>📅 Мероприятия</b> → подменю\n"
-        "• 📋 Ближайшие — все грядущие события\n"
-        "• ➕ Создать — предложи своё (уйдёт на модерацию)\n\n"
+        "• Регистрируйся на события клуба\n"
+        "• Отчитывайся участием\n"
+        "• Получай XP за участие\n\n"
 
         "<b>🏆 Турниры:</b>\n"
         "• Еженедельные спринты\n"
@@ -361,22 +361,10 @@ async def cmd_admin(message: types.Message):
 # Навигация
 # ─────────────────────────────────────────
 
-@router.message(F.text == "🎯 Челленджи")
-async def menu_challenges(message: types.Message):
-    """Открыть подменю Челленджи."""
-    await message.answer("🎯 <b>Челленджи</b>", reply_markup=get_challenges_menu_kb())
-
-
-@router.message(F.text == "📅 Мероприятия")
-async def menu_events(message: types.Message):
-    """Открыть подменю Мероприятия."""
-    await message.answer("📅 <b>Мероприятия</b>", reply_markup=get_events_menu_kb())
-
-
 @router.message(F.text == "⬅️ Главное меню")
 async def back_to_main(message: types.Message):
     """Вернуться в главное меню."""
-    await message.answer("Главное меню", reply_markup=await main_kb_for(message.from_user.id))
+    await message.answer("Вернулись в главное меню.", reply_markup=await main_kb_for(message.from_user.id))
 
 
 @router.message(F.text == "❌ Отмена")

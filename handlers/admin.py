@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aiogram.enums import ChatType
 from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
@@ -21,6 +22,7 @@ from models import Moderator
 from services.events import create_event_template, get_templates
 
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 
 def _is_admin(user_id: int) -> bool:
@@ -60,133 +62,11 @@ async def cmd_back(message: Message, state: FSMContext) -> None:
         await message.answer("Панель модератора:", reply_markup=get_moderator_main_kb())
 
 
-
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-# На модерации — мероприятия ожидающие публикации
-# ═
-
-@router.message(F.text == "🗂 На модерации")
-async def cmd_moderation_queue(message: Message) -> None:
-    from services.events import is_moderator, get_pending_events
-    from keyboards import get_event_moderation_kb
-    user_id = message.from_user.id
-    async with async_session() as session:
-        is_mod = await is_moderator(session, user_id)
-    if not (_is_admin(user_id) or is_mod):
-        return
-    events = await get_pending_events()
-    if not events:
-        await message.answer("✅ Нет мероприятий на модерации.")
-        return
-    await message.answer("🗂 <b>На модерации: " + str(len(events)) + " шт.</b>")
-    for ev in events:
-        date_str = ev.event_date.strftime("%d.%m.%Y %H:%M") if ev.event_date else "—"
-        parts = ["📅 <b>" + ev.title + "</b>", "⏰ " + date_str]
-        if ev.location:
-            parts.append("📍 " + ev.location)
-        if ev.description:
-            parts.append(ev.description)
-        await message.answer("\n".join(parts), reply_markup=get_event_moderation_kb(ev.id))
-
-
 # ═══════════════════════════════════════════════════════════════
 # Шаблоны мероприятий (только для администраторов)
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(F.text == "📐 Шаблоны мероприятий")
+@router.message(F.text == "📋 Шаблоны мероприятий")
 async def cmd_templates_menu(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         await message.answer("Шаблоны доступны только администраторам.")
@@ -381,7 +261,7 @@ async def fsm_tpl_cancel(message: Message, state: FSMContext) -> None:
 # Управление модераторами (только для администраторов)
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(F.text == "👥 Модераторы")
+@router.message(F.text == "👥 Управление модераторами")
 async def cmd_manage_mods(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         await message.answer("Управление модераторами доступно только администраторам.")

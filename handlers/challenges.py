@@ -17,6 +17,7 @@ Inline-кнопки используются для:
 import logging
 from datetime import datetime
 
+from aiogram.enums import ChatType
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -34,6 +35,7 @@ from services.challenges import create_challenge, get_type_name, get_public_chal
 
 log = logging.getLogger(__name__)
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 DATE_FMT = "%d.%m.%Y"
 
