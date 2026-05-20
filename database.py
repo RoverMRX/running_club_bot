@@ -22,6 +22,7 @@ async def init_db() -> None:
         "ALTER TABLE events ADD COLUMN is_pending BOOLEAN DEFAULT 1",
         # vote_message_id — для снятия кнопок после апрува
         "ALTER TABLE reports ADD COLUMN vote_message_id INTEGER",
+        "ALTER TABLE challenge_participants ADD COLUMN penalty TEXT",
         # tournament_id уже есть в модели, но мог быть создан без него
         "ALTER TABLE reports ADD COLUMN tournament_id_v2 INTEGER",  # noqa: не нужна, просто guard
     ]

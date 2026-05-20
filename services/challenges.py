@@ -162,10 +162,12 @@ async def get_public_challenges(exclude_user: int | None = None, limit: int = 20
         return list(res.scalars().all())
 
 
-async def join_challenge(challenge_id: int, user_id: int) -> dict:
+async def join_challenge(challenge_id: int, user_id: int, penalty: str | None = None) -> dict:
     """
     Присоединить пользователя к чужому челленджу.
 
+    Args:
+        penalty: личная ставка участника (опционально)
     Returns:
         {'ok': bool, 'reason': str}
     """
@@ -199,6 +201,7 @@ async def join_challenge(challenge_id: int, user_id: int) -> dict:
                 session.add(ChallengeParticipant(
                     challenge_id=challenge_id,
                     user_id=user_id,
+                    penalty=penalty,
                 ))
                 await session.flush()
             except IntegrityError:

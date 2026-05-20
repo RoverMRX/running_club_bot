@@ -102,6 +102,7 @@ class ChallengeParticipant(Base):
     current_value = Column(Float,   default=0.0)
     current_runs  = Column(Integer, default=0)
     current_time  = Column(Integer, default=0)
+    penalty       = Column(Text,    nullable=True)  # личная ставка участника
 
     __table_args__ = (
         UniqueConstraint("challenge_id", "user_id", name="uq_challenge_participant"),
