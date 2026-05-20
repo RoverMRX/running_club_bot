@@ -28,8 +28,9 @@ from keyboards import (
     get_end_date_inline_kb,
     get_cancel_kb,
     get_main_kb,
+    get_challenges_menu_kb,
 )
-from services.challenges import create_challenge, get_type_name
+from services.challenges import create_challenge, get_type_name, get_public_challenges, join_challenge
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -121,7 +122,7 @@ async def cmd_create_challenge(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "❌ Отмена", ChallengeCreate)
 async def cancel_by_text(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Создание челленджа отменено.", reply_markup=get_main_kb())
+    await message.answer("Создание челленджа отменено.", reply_markup=get_challenges_menu_kb())
 
 
 # ─── Шаг 1: выбор типа (callback) ───
@@ -133,7 +134,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
     if ch_type == "cancel":
         await state.clear()
         await call.message.edit_text("Создание челленджа отменено.")
-        await call.message.answer("Главное меню:", reply_markup=get_main_kb())
+        await call.message.answer("🎯 Челленджи", reply_markup=get_challenges_menu_kb())
         await call.answer()
         return
 
@@ -370,7 +371,7 @@ async def cb_confirm(call: CallbackQuery, state: FSMContext) -> None:
     if action == "no":
         await state.clear()
         await call.message.edit_text("Создание отменено.")
-        await call.message.answer("Главное меню:", reply_markup=get_main_kb())
+        await call.message.answer("🎯 Челленджи", reply_markup=get_challenges_menu_kb())
         await call.answer()
         return
 
@@ -409,3 +410,93 @@ async def cb_confirm(call: CallbackQuery, state: FSMContext) -> None:
         parse_mode="Markdown",
         reply_markup=get_main_kb(),
     )
+
+
+_CH_TYPE_LABELS = {
+    "weekly_runs": "🔄 Регулярный",
+    "daily_km":    "📅 Дневной",
+    "weekly_km":   "📅 Недельный",
+    "monthly_km":  "📆 Месячный",
+    "race":        "🏁 Забег",
+}
+
+
+def _fmt_challenge_card(ch, pos=None) -> str:
+    label = _CH_TYPE_LABELS.get(ch.ch_type, ch.ch_type)
+    prefix = f"{pos}. " if pos else ""
+    lines = [f"{prefix}<b>{ch.title}</b> ({label})"]
+    if ch.ch_type == "weekly_runs":
+        pct = min(100, int(ch.current_runs / ch.goal_runs * 100)) if ch.goal_runs else 0
+        lines.append(f"   {ch.goal_runs} пробежек/нед · {ch.current_runs}/{ch.goal_runs} ({pct}%)")
+    elif ch.ch_type in ("daily_km", "weekly_km", "monthly_km", "race"):
+        pct = min(100, int(ch.current_value / ch.goal_value * 100)) if ch.goal_value else 0
+        lines.append(f"   {ch.current_value:.1f}/{ch.goal_value:.1f} км ({pct}%)")
+    if ch.penalty:
+        lines.append(f"   💰 {ch.penalty}")
+    return "\n".join(lines)
+
+
+@router.message(F.text == "📋 Мои челленджи")
+async def cmd_my_challenges(message: Message) -> None:
+    from database import async_session
+    from models import Challenge
+    from sqlalchemy import select
+    async with async_session() as session:
+        res = await session.execute(
+            select(Challenge).where(Challenge.user_id == message.from_user.id, Challenge.is_active == True)
+        )
+        challenges = list(res.scalars().all())
+    if not challenges:
+        await message.answer("У тебя нет активных челленджей.", reply_markup=get_challenges_menu_kb())
+        return
+    lines = ["📋 <b>Мои активные челленджи</b>\n"]
+    for i, ch in enumerate(challenges, 1):
+        lines.append(_fmt_challenge_card(ch, pos=i))
+    await message.answer("\n\n".join(lines), reply_markup=get_challenges_menu_kb())
+
+
+@router.message(F.text == "🤝 Челленджи клуба")
+async def cmd_public_challenges(message: Message) -> None:
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from database import async_session
+    from models import ChallengeParticipant
+    from sqlalchemy import select as sa_select
+    user_id = message.from_user.id
+    # Показываем ВСЕ публичные челленджи, включая свои
+    challenges = await get_public_challenges(exclude_user=None, limit=20)
+    if not challenges:
+        await message.answer("😔 Пока нет публичных челленджей.", reply_markup=get_challenges_menu_kb())
+        return
+    # Узнаём в каких уже участвуем
+    async with async_session() as session:
+        res = await session.execute(
+            sa_select(ChallengeParticipant.challenge_id).where(
+                ChallengeParticipant.user_id == user_id
+            )
+        )
+        joined_ids = {row[0] for row in res.all()}
+    lines = ["🤝 <b>Челленджи клуба</b>\n"]
+    builder = InlineKeyboardBuilder()
+    has_buttons = False
+    for i, ch in enumerate(challenges, 1):
+        lines.append(_fmt_challenge_card(ch, pos=i))
+        is_own = ch.user_id == user_id
+        is_joined = ch.id in joined_ids
+        if is_own:
+            builder.button(text=f"🎽 {i}. Мой", callback_data="noop")
+        elif is_joined:
+            builder.button(text=f"✅ {i}. Уже участвую", callback_data="noop")
+        else:
+            builder.button(text=f"🤝 {i}. Присоединиться", callback_data=f"pub_join:{ch.id}")
+            has_buttons = True
+    builder.adjust(1)
+    await message.answer("\n\n".join(lines), reply_markup=get_challenges_menu_kb())
+    if challenges:
+        await message.answer("👇 Действия:", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("pub_join:"))
+async def cb_join_public_challenge(call: CallbackQuery) -> None:
+    challenge_id = int(call.data.split(":")[1])
+    result = await join_challenge(challenge_id, call.from_user.id)
+    await call.answer(("✅ " if result["ok"] else "❌ ") + result["reason"], show_alert=True)
