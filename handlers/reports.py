@@ -175,10 +175,10 @@ async def handle_report(message: types.Message, bot: Bot):
     if message.message_thread_id != config.REPORTS_THREAD_ID:
         return
 
-    # Парсим дистанцию
-    caption = message.caption.lower()
+    # Парсим дистанцию — берём только первую строку подписи
+    first_line = message.caption.splitlines()[0].lower()
     try:
-        raw = caption.replace("#отчет", "").strip()
+        raw = first_line.replace("#отчет", "").strip()
         km = float(raw.replace(",", ".")) if raw else 1.0
     except ValueError:
         km = 1.0
@@ -246,6 +246,96 @@ async def handle_report(message: types.Message, bot: Bot):
         )
     else:
         # Нет ни мероприятий ни челленджей — сразу голосование
+        vote_msg = await message.reply(
+            f"{header}\n\n"
+            f"Нужно <b>{config.VOTES_REQUIRED}</b> голоса для одобрения.",
+            reply_markup=get_report_vote_kb(report.id, pos=0, neg=0),
+            parse_mode="HTML",
+        )
+        await _save_vote_msg(report.id, vote_msg.message_id)
+
+    await _notify_admins(bot, report.id, name, km)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Приём текстового отчёта (без фото)
+# ──────────────────────────────────────────────────────────────────────────────
+@router.message(F.text.func(lambda t: t and "#отчет" in t.lower()))
+async def handle_report_text(message: types.Message, bot: Bot):
+    """Принимает текстовый #отчет N.N в топике REPORTS_THREAD_ID."""
+    if not config.REPORTS_THREAD_ID:
+        return
+    if message.message_thread_id != config.REPORTS_THREAD_ID:
+        return
+
+    # Парсим дистанцию: берём первую строку, убираем #отчет
+    first_line = message.text.splitlines()[0].lower()
+    try:
+        raw = first_line.replace("#отчет", "").strip()
+        km = float(raw.replace(",", ".")) if raw else 1.0
+    except ValueError:
+        km = 1.0
+    km = max(0.1, round(km, 2))
+
+    # Проверяем регистрацию
+    async with async_session() as session:
+        u_res = await session.execute(
+            select(User).where(User.tg_id == message.from_user.id)
+        )
+        user = u_res.scalar_one_or_none()
+    if not user:
+        await message.reply(
+            "⚠️ Ты ещё не зарегистрирован.\n"
+            "Напиши /start в личку боту, чтобы создать профиль."
+        )
+        return
+
+    # Привязываем к активному турниру если есть
+    from services.tournaments import get_active_tournament, is_participant
+    active_tour = await get_active_tournament()
+    tour_id = None
+    if active_tour and await is_participant(active_tour.id, message.from_user.id):
+        tour_id = active_tour.id
+
+    report = await create_report(
+        user_tg_id=message.from_user.id,
+        km=km,
+        message_id=message.message_id,
+        chat_id=message.chat.id,
+        thread_id=message.message_thread_id,
+        tournament_id=tour_id,
+    )
+
+    name = (
+        f"@{message.from_user.username}"
+        if message.from_user.username
+        else message.from_user.full_name
+    )
+
+    # Загружаем мероприятия и подходящие челленджи
+    events     = await _get_participant_events(message.from_user.id)
+    challenges = await detect_matching_challenges(message.from_user.id, km)
+
+    header = (
+        f"🏃 <b>Новый отчёт!</b>\n"
+        f"Атлет: {name}\n"
+        f"Результат: <b>{km} км</b>"
+    )
+
+    if events or challenges:
+        sections = []
+        if events:
+            sections.append("📅 Выбери мероприятие (если это отчёт о нём)")
+        if challenges:
+            sections.append("🎯 Выбери челленджи (можно несколько)")
+        sections.append("Нажми <b>✔️ Готово</b> когда закончишь.")
+
+        await message.reply(
+            f"{header}\n\n" + "\n".join(sections),
+            reply_markup=_build_link_kb(report.id, events, challenges),
+            parse_mode="HTML",
+        )
+    else:
         vote_msg = await message.reply(
             f"{header}\n\n"
             f"Нужно <b>{config.VOTES_REQUIRED}</b> голоса для одобрения.",
@@ -532,7 +622,7 @@ async def cb_admin_approve(callback: types.CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data.startswith("adm_reject:"))
-async def cb_admin_reject(callback: types.CallbackQuery):
+async def cb_admin_reject(callback: types.CallbackQuery, bot: Bot):
     report_id = int(callback.data.split(":")[1])
 
     if not await _has_rights(callback.from_user.id):
@@ -541,6 +631,9 @@ async def cb_admin_reject(callback: types.CallbackQuery):
     ok = await reject_report(report_id, rejected_by=callback.from_user.id)
     if not ok:
         return await callback.answer("Отчёт не найден или уже закрыт.")
+
+    # Убираем кнопки с vote-сообщения в группе
+    await _clear_vote_buttons_rejected(bot, report_id)
 
     try:
         await callback.message.edit_text(
@@ -615,6 +708,27 @@ async def _save_vote_msg(report_id: int, vote_message_id: int) -> None:
         if report:
             report.vote_message_id = vote_message_id
             await session.commit()
+
+
+async def _clear_vote_buttons_rejected(bot: Bot, report_id: int) -> None:
+    """Заменяет vote-кнопки на сообщение об отклонении."""
+    async with async_session() as session:
+        r_res = await session.execute(select(Report).where(Report.id == report_id))
+        report = r_res.scalar_one_or_none()
+        if not report or not report.vote_message_id:
+            return
+        chat_id = report.chat_id
+        vote_msg_id = report.vote_message_id
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=vote_msg_id,
+            text="❌ <b>Отчёт отклонён администратором</b>",
+            reply_markup=get_report_rejected_kb(),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.debug("Не удалось обновить vote-сообщение при реджекте: %s", e)
 
 
 async def _clear_vote_buttons(bot: Bot, report_id: int) -> None:

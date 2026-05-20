@@ -108,14 +108,14 @@ async def detect_matching_challenges(
         own_challenges = list(own_res.scalars().all())
 
         joined_res = await session.execute(
-            select(ChallengeParticipant).where(
+            select(Challenge)
+            .join(ChallengeParticipant, ChallengeParticipant.challenge_id == Challenge.id)
+            .where(
                 ChallengeParticipant.user_id == user_id,
+                Challenge.is_active == True,
             )
         )
-        joined_challenges = [
-            p.challenge for p in joined_res.scalars().all()
-            if p.challenge and p.challenge.is_active
-        ]
+        joined_challenges = list(joined_res.scalars().all())
 
         for ch in own_challenges + joined_challenges:
             if ch.pause_until and ch.pause_until > now:

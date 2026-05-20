@@ -1,4 +1,6 @@
 .env
 *.env
+*.zip
+tech_task.md
 __pycache__/
 it_run.db
