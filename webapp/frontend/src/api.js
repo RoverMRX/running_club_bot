@@ -42,22 +42,38 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// ─── Профиль ─────────────────────────────────────────────────
 export const getProfile       = () => api.get("/profile").then(r => r.data);
 export const getLeaderboard   = () => api.get("/profile/leaderboard").then(r => r.data);
-export const getMyChallenges  = () => api.get("/challenges/my").then(r => r.data);
-export const getClubChallenges = (page = 0) => api.get("/challenges/club", { params: { page, page_size: 10 } }).then(r => r.data);
+
+// ─── Челленджи ───────────────────────────────────────────────
+export const getMyChallenges        = () => api.get("/challenges/my").then(r => r.data);
+export const getMyChallengesHistory = () => api.get("/challenges/my/history").then(r => r.data);
+export const getClubChallenges      = (page = 0) => api.get("/challenges/club", { params: { page, page_size: 10 } }).then(r => r.data);
 export const getClubChallengesCount = () => api.get("/challenges/club/count").then(r => r.data);
-export const getChallenge     = (id) => api.get(`/challenges/${id}`).then(r => r.data);
-export const joinChallenge    = (id, penalty = null) => api.post(`/challenges/${id}/join`, { penalty }).then(r => r.data);
-export const getReports       = (page = 0) => api.get("/reports", { params: { page, page_size: 20 } }).then(r => r.data);
-export const getMyReports     = (page = 0) => api.get("/reports/my", { params: { page, page_size: 20 } }).then(r => r.data);
-export const getEvents        = (upcomingOnly = true) => api.get("/events", { params: { upcoming_only: upcomingOnly } }).then(r => r.data);
-export const getPendingEvents = () => api.get("/events/pending").then(r => r.data);
-export const createEvent      = (data) => api.post("/events", data).then(r => r.data);
-export const joinEvent        = (id) => api.post(`/events/${id}/join`).then(r => r.data);
-export const leaveEvent       = (id) => api.post(`/events/${id}/leave`).then(r => r.data);
-export const approveEvent     = (id) => api.post(`/events/${id}/approve`).then(r => r.data);
-export const rejectEvent      = (id) => api.post(`/events/${id}/reject`).then(r => r.data);
-export const getTournaments   = (activeOnly = true) => api.get("/tournaments", { params: { active_only: activeOnly } }).then(r => r.data);
-export const getTournament    = (id) => api.get(`/tournaments/${id}`).then(r => r.data);
-export const joinTournament   = (id) => api.post(`/tournaments/${id}/join`).then(r => r.data);
+export const getChallenge           = (id) => api.get(`/challenges/${id}`).then(r => r.data);
+export const createChallenge        = (data) => api.post("/challenges", data).then(r => r.data);
+export const joinChallenge          = (id, penalty = null) => api.post(`/challenges/${id}/join`, { penalty }).then(r => r.data);
+export const leaveChallenge         = (id) => api.post(`/challenges/${id}/leave`).then(r => r.data);
+export const closeChallenge         = (id) => api.post(`/challenges/${id}/close`).then(r => r.data);
+
+// ─── Отчёты ──────────────────────────────────────────────────
+export const getReports   = (page = 0) => api.get("/reports",    { params: { page, page_size: 20 } }).then(r => r.data);
+export const getMyReports = (page = 0) => api.get("/reports/my", { params: { page, page_size: 20 } }).then(r => r.data);
+
+// ─── Мероприятия ─────────────────────────────────────────────
+export const getEvents         = (upcomingOnly = true) => api.get("/events", { params: { upcoming_only: upcomingOnly } }).then(r => r.data);
+export const getArchiveEvents  = () => api.get("/events", { params: { upcoming_only: false } }).then(r => r.data);
+export const getPendingEvents  = () => api.get("/events/pending").then(r => r.data);
+export const getEvent          = (id) => api.get(`/events/${id}`).then(r => r.data);
+export const getEventTemplates = () => api.get("/events/templates").then(r => r.data);
+export const createEvent       = (data) => api.post("/events", data).then(r => r.data);
+export const joinEvent         = (id) => api.post(`/events/${id}/join`).then(r => r.data);
+export const leaveEvent        = (id) => api.post(`/events/${id}/leave`).then(r => r.data);
+export const approveEvent      = (id) => api.post(`/events/${id}/approve`).then(r => r.data);
+export const rejectEvent       = (id, reason = "") => api.post(`/events/${id}/reject`, { reason }).then(r => r.data);
+
+// ─── Турниры ─────────────────────────────────────────────────
+export const getTournaments = (activeOnly = true) => api.get("/tournaments", { params: { active_only: activeOnly } }).then(r => r.data);
+export const getTournament  = (id) => api.get(`/tournaments/${id}`).then(r => r.data);
+export const joinTournament = (id) => api.post(`/tournaments/${id}/join`).then(r => r.data);

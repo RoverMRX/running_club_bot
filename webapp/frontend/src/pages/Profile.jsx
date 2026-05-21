@@ -5,7 +5,7 @@ import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 
 const LEVEL_LABEL = (lvl) =>
-  lvl >= 20 ? "Атлет" : lvl >= 5 ? "Бегун" : "Новичок";
+  lvl >= 20 ? "Атлет" : lvl >= 10 ? "Мастер" : lvl >= 5 ? "Бегун" : "Новичок";
 
 function StatGrid({ items }) {
   return (
@@ -24,10 +24,15 @@ function StatGrid({ items }) {
 }
 
 function ProfileCard({ p }) {
-  const progress = p.xp % 100;
+  // xp_in_level и xp_to_next приходят с бэкенда
+  const xpIn   = p.xp_in_level ?? (p.xp % 100);   // fallback для старых ответов
+  const xpNext = p.xp_to_next  ?? 100;
+  const pct    = xpNext > 0 ? Math.min(100, Math.round(xpIn / xpNext * 100)) : 0;
+
   return (
     <div>
       <div className="card" style={{ marginBottom: 8 }}>
+        {/* Шапка: аватар + имя + XP */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{
             width: 52, height: 52, borderRadius: "50%",
@@ -49,16 +54,22 @@ function ProfileCard({ p }) {
             <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>XP</div>
           </div>
         </div>
+
+        {/* Прогресс-бар уровня */}
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span className="hint" style={{ fontSize: 12 }}>До следующего уровня</span>
-            <span className="hint" style={{ fontSize: 12 }}>{progress} / 100</span>
+            <span className="hint" style={{ fontSize: 12 }}>До уровня {p.level + 1}</span>
+            <span className="hint" style={{ fontSize: 12 }}>{xpIn} / {xpNext} XP</span>
           </div>
-          <div className="progress-wrap" style={{ height: 3 }}>
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
+          <div className="progress-wrap" style={{ height: 4 }}>
+            <div className="progress-fill" style={{ width: `${pct}%` }} />
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-dim)", textAlign: "right", marginTop: 3 }}>
+            {pct}%
           </div>
         </div>
       </div>
+
       <StatGrid items={[
         { label: "Стрик",         value: `${p.streak} нед` },
         { label: "Сезон XP",      value: p.season_xp },
@@ -92,7 +103,9 @@ function Leaderboard({ data }) {
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontWeight: 600 }}>{u.xp} XP</div>
-            <div className="hint" style={{ fontSize: 12 }}>стрик {u.streak}</div>
+            <div className="hint" style={{ fontSize: 12 }}>
+              Ур. {u.level} · стрик {u.streak}
+            </div>
           </div>
         </div>
       ))}
@@ -128,12 +141,14 @@ export default function Profile() {
     queryKey: ["profile"],
     queryFn: getProfile,
     enabled: initReady,
+    staleTime: 30_000,
   });
 
   const leaderQ = useQuery({
     queryKey: ["leaderboard"],
     queryFn: getLeaderboard,
     enabled: initReady && tab === "leaders",
+    staleTime: 60_000,
   });
 
   if (!initReady || profileQ.isLoading) return <Loader />;
