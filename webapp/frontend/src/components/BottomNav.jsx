@@ -1,7 +1,6 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import "./BottomNav.css";
 
-// SVG-иконки вместо эмодзи — монохромные, строгие
 const icons = {
   profile: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -39,18 +38,27 @@ const NAV_ITEMS = [
 ];
 
 export default function BottomNav() {
+  const { pathname } = useLocation();
+
   return (
     <nav className="bottom-nav">
-      {NAV_ITEMS.map(({ to, icon, label }) => (
-        <NavLink
-          key={to}
-          to={to}
-          className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
-        >
-          <span className="nav-icon">{icon}</span>
-          <span className="nav-label">{label}</span>
-        </NavLink>
-      ))}
+      {NAV_ITEMS.map(({ to, icon, label }) => {
+        // Профиль подсвечиваем и на /, и на /profile
+        const isActive =
+          to === "/profile"
+            ? pathname === "/" || pathname === "/profile"
+            : pathname.startsWith(to);
+        return (
+          <NavLink
+            key={to}
+            to={to}
+            className={"nav-item" + (isActive ? " active" : "")}
+          >
+            <span className="nav-icon">{icon}</span>
+            <span className="nav-label">{label}</span>
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

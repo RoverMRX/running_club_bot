@@ -1,0 +1,28 @@
+services:
+  bot:
+    build: .
+    container_name: runclubbot-test
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+
+  api:
+    build:
+      context: .
+      dockerfile: webapp/backend/Dockerfile
+    container_name: runclub-api-test
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./webapp/frontend
+    container_name: runclub-frontend-test
+    restart: unless-stopped
+    ports:
+      - "3001:80"

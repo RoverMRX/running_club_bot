@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from aiogram.enums import ChatType
 from aiogram import F, Router
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    WebAppInfo,
+)
 from sqlalchemy import select, delete
 
 import config
@@ -24,6 +29,8 @@ from services.events import create_event_template, get_templates
 router = Router()
 router.message.filter(F.chat.type == ChatType.PRIVATE)
 
+WEBAPP_URL = "https://run.archer-srv.ru"
+
 
 def _is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
@@ -38,12 +45,11 @@ async def cmd_admin_panel(message: Message) -> None:
     from services.events import is_moderator
     user_id = message.from_user.id
 
-    is_mod = False
     async with async_session() as session:
         is_mod = await is_moderator(session, user_id)
 
     if not (_is_admin(user_id) or is_mod):
-        return  # Молча игнорируем — кнопки у них быть не должно
+        return
 
     if _is_admin(user_id):
         await message.answer("👑 <b>ПАНЕЛЬ АДМИНИСТРАТОРА</b>", reply_markup=get_admin_main_kb())
@@ -63,7 +69,7 @@ async def cmd_back(message: Message, state: FSMContext) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Шаблоны мероприятий (только для администраторов)
+# Шаблоны мероприятий
 # ═══════════════════════════════════════════════════════════════
 
 @router.message(F.text == "📋 Шаблоны мероприятий")
@@ -105,8 +111,6 @@ async def cmd_list_templates(message: Message) -> None:
     await message.answer("\n".join(lines), reply_markup=get_templates_manage_kb())
 
 
-# ── FSM создания шаблона ──────────────────────────────────────
-
 class CreateTemplateFSM(StatesGroup):
     name          = State()
     description   = State()
@@ -124,10 +128,7 @@ async def cmd_create_template_start(message: Message, state: FSMContext) -> None
         return
     await state.set_state(CreateTemplateFSM.name)
     await message.answer(
-        "Создаём шаблон мероприятия.\n\n"
-        "<b>Шаблон хранит всё кроме даты</b> — название, описание, место, дистанцию, XP.\n"
-        "При создании мероприятия по шаблону нужно указать только дату и время.\n\n"
-        "Введи <b>название</b> шаблона (например «Паркран 5км»):",
+        "Создаём шаблон мероприятия.\n\nВведи <b>название</b> шаблона:",
         reply_markup=get_cancel_kb(),
     )
 
@@ -136,10 +137,7 @@ async def cmd_create_template_start(message: Message, state: FSMContext) -> None
 async def fsm_tpl_name(message: Message, state: FSMContext) -> None:
     await state.update_data(name=message.text.strip())
     await state.set_state(CreateTemplateFSM.description)
-    await message.answer(
-        "Введи <b>описание</b> мероприятия (или «-» чтобы пропустить):",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Введи <b>описание</b> (или «-»):", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.description, F.text != "❌ Отмена")
@@ -147,11 +145,7 @@ async def fsm_tpl_description(message: Message, state: FSMContext) -> None:
     raw = message.text.strip()
     await state.update_data(description=None if raw == "-" else raw)
     await state.set_state(CreateTemplateFSM.location)
-    await message.answer(
-        "Введи <b>место проведения</b> (или «-» чтобы пропустить):\n"
-        "<i>Например: Парк Горького, старт у главного входа</i>",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Введи <b>место проведения</b> (или «-»):", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.location, F.text != "❌ Отмена")
@@ -159,10 +153,7 @@ async def fsm_tpl_location(message: Message, state: FSMContext) -> None:
     raw = message.text.strip()
     await state.update_data(location=None if raw == "-" else raw)
     await state.set_state(CreateTemplateFSM.distance_km)
-    await message.answer(
-        "Введи <b>дистанцию</b> в км (или «-» чтобы пропустить):",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Введи <b>дистанцию</b> в км (или «-»):", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.distance_km, F.text != "❌ Отмена")
@@ -173,15 +164,11 @@ async def fsm_tpl_distance(message: Message, state: FSMContext) -> None:
         try:
             distance_km = float(raw.replace(",", "."))
         except ValueError:
-            await message.answer("Введи число (например 5.5) или «-» чтобы пропустить:")
+            await message.answer("Введи число или «-»:")
             return
     await state.update_data(distance_km=distance_km)
     await state.set_state(CreateTemplateFSM.is_external)
-    await message.answer(
-        "Мероприятие <b>внешнее</b> (мы участвуем на чужом старте)?\n"
-        "Ответь <b>да</b> или <b>нет</b>:",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Мероприятие внешнее? Ответь <b>да</b> или <b>нет</b>:", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.is_external, F.text != "❌ Отмена")
@@ -192,10 +179,7 @@ async def fsm_tpl_is_external(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(is_external=answer in ("да", "yes"))
     await state.set_state(CreateTemplateFSM.xp_bonus)
-    await message.answer(
-        "Введи <b>XP-бонус</b> за участие (например <code>100</code>):",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Введи <b>XP-бонус</b> (например <code>100</code>):", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.xp_bonus, F.text != "❌ Отмена")
@@ -204,14 +188,11 @@ async def fsm_tpl_xp_bonus(message: Message, state: FSMContext) -> None:
         xp_bonus = int(message.text.strip())
         assert xp_bonus >= 0
     except (ValueError, AssertionError):
-        await message.answer("Введи целое положительное число, например <code>100</code>:")
+        await message.answer("Введи целое положительное число:")
         return
     await state.update_data(xp_bonus=xp_bonus)
     await state.set_state(CreateTemplateFSM.xp_multiplier)
-    await message.answer(
-        "Введи <b>множитель XP за км</b> (например <code>1.5</code>):",
-        reply_markup=get_cancel_kb(),
-    )
+    await message.answer("Введи <b>множитель XP за км</b> (например <code>1.5</code>):", reply_markup=get_cancel_kb())
 
 
 @router.message(CreateTemplateFSM.xp_multiplier, F.text != "❌ Отмена")
@@ -240,15 +221,11 @@ async def fsm_tpl_xp_multiplier(message: Message, state: FSMContext) -> None:
         )
 
     ext_label = "🌍 внешнее" if tpl.is_external else "🏃 клубное"
-    summary = [f"✅ Шаблон <b>{tpl.name}</b> создан! [{ext_label}]"]
-    if tpl.location:
-        summary.append(f"📍 {tpl.location}")
-    if tpl.distance_km:
-        summary.append(f"🏃 {tpl.distance_km} км")
-    summary.append(f"⭐ XP: +{tpl.xp_bonus} · ×{tpl.xp_multiplier}")
-    summary.append(f"\nТеперь при создании мероприятия выбери этот шаблон — нужно будет только указать дату.")
-
-    await message.answer("\n".join(summary), reply_markup=get_templates_manage_kb())
+    await message.answer(
+        f"✅ Шаблон <b>{tpl.name}</b> создан! [{ext_label}]\n"
+        f"⭐ XP: +{tpl.xp_bonus} · ×{tpl.xp_multiplier}",
+        reply_markup=get_templates_manage_kb(),
+    )
 
 
 @router.message(F.text == "❌ Отмена", StateFilter(CreateTemplateFSM))
@@ -258,13 +235,13 @@ async def fsm_tpl_cancel(message: Message, state: FSMContext) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Управление модераторами (только для администраторов)
+# Управление модераторами
 # ═══════════════════════════════════════════════════════════════
 
 @router.message(F.text == "👥 Управление модераторами")
 async def cmd_manage_mods(message: Message) -> None:
     if not _is_admin(message.from_user.id):
-        await message.answer("Управление модераторами доступно только администраторам.")
+        await message.answer("Только для администраторов.")
         return
     await message.answer("👥 Управление модераторами:", reply_markup=get_moderator_manage_kb())
 
@@ -272,32 +249,21 @@ async def cmd_manage_mods(message: Message) -> None:
 @router.message(F.text == "📋 Список модераторов")
 async def cmd_list_mods(message: Message) -> None:
     if not _is_admin(message.from_user.id):
-        await message.answer("Недостаточно прав.")
         return
-
     async with async_session() as session:
         result = await session.execute(select(Moderator).order_by(Moderator.added_at))
         mods = result.scalars().all()
 
     if not mods:
-        await message.answer(
-            "Модераторов пока нет.\nДобавь через «➕ Добавить модератора».",
-            reply_markup=get_moderator_manage_kb(),
-        )
+        await message.answer("Модераторов пока нет.", reply_markup=get_moderator_manage_kb())
         return
 
     lines = ["<b>Модераторы:</b>\n"]
     for i, mod in enumerate(mods, 1):
         uname = f"@{mod.username}" if mod.username else "—"
-        lines.append(
-            f"{i}. {uname}\n"
-            f"   ID: <code>{mod.tg_id}</code>\n"
-            f"   Добавлен: {mod.added_at.strftime('%d.%m.%Y')}"
-        )
+        lines.append(f"{i}. {uname} — <code>{mod.tg_id}</code>")
     await message.answer("\n".join(lines), reply_markup=get_moderator_manage_kb())
 
-
-# ── FSM добавления модератора ─────────────────────────────────
 
 class AddModeratorFSM(StatesGroup):
     tg_id = State()
@@ -306,12 +272,10 @@ class AddModeratorFSM(StatesGroup):
 @router.message(F.text == "➕ Добавить модератора")
 async def cmd_add_mod_start(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
-        await message.answer("Недостаточно прав.")
         return
     await state.set_state(AddModeratorFSM.tg_id)
     await message.answer(
-        "Отправь <b>Telegram ID</b> пользователя или перешли любое его сообщение.\n\n"
-        "<i>Узнать ID: @userinfobot</i>",
+        "Отправь <b>Telegram ID</b> или перешли сообщение пользователя.\n<i>Узнать ID: @userinfobot</i>",
         reply_markup=get_cancel_kb(),
     )
 
@@ -330,32 +294,21 @@ async def fsm_add_mod_id(message: Message, state: FSMContext) -> None:
             return
 
     if tg_id in config.ADMIN_IDS:
-        await message.answer(
-            "Этот пользователь уже является администратором.",
-            reply_markup=get_moderator_manage_kb(),
-        )
+        await message.answer("Этот пользователь уже администратор.", reply_markup=get_moderator_manage_kb())
         await state.clear()
         return
 
     async with async_session() as session:
         existing = await session.execute(select(Moderator).where(Moderator.tg_id == tg_id))
         if existing.scalar_one_or_none():
-            await message.answer(
-                f"Пользователь <code>{tg_id}</code> уже является модератором.",
-                reply_markup=get_moderator_manage_kb(),
-            )
+            await message.answer(f"<code>{tg_id}</code> уже модератор.", reply_markup=get_moderator_manage_kb())
             await state.clear()
             return
-
         session.add(Moderator(tg_id=tg_id, username=username, added_by=message.from_user.id))
         await session.commit()
 
     uname = f"@{username}" if username else f"ID {tg_id}"
-    await message.answer(
-        f"✅ Модератор <b>{uname}</b> добавлен!\n"
-        f"Теперь он может одобрять отчёты и публиковать мероприятия.",
-        reply_markup=get_moderator_manage_kb(),
-    )
+    await message.answer(f"✅ Модератор <b>{uname}</b> добавлен!", reply_markup=get_moderator_manage_kb())
     await state.clear()
 
 
@@ -365,8 +318,6 @@ async def fsm_add_mod_cancel(message: Message, state: FSMContext) -> None:
     await message.answer("Отменено.", reply_markup=get_moderator_manage_kb())
 
 
-# ── FSM удаления модератора ───────────────────────────────────
-
 class RemoveModeratorFSM(StatesGroup):
     tg_id = State()
 
@@ -374,9 +325,7 @@ class RemoveModeratorFSM(StatesGroup):
 @router.message(F.text == "➖ Удалить модератора")
 async def cmd_remove_mod_start(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
-        await message.answer("Недостаточно прав.")
         return
-
     async with async_session() as session:
         result = await session.execute(select(Moderator).order_by(Moderator.added_at))
         mods = result.scalars().all()
@@ -405,15 +354,10 @@ async def fsm_remove_mod_id(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
         result = await session.execute(select(Moderator).where(Moderator.tg_id == tg_id))
         mod = result.scalar_one_or_none()
-
         if mod is None:
-            await message.answer(
-                f"Модератор с ID <code>{tg_id}</code> не найден.",
-                reply_markup=get_moderator_manage_kb(),
-            )
+            await message.answer(f"Модератор <code>{tg_id}</code> не найден.", reply_markup=get_moderator_manage_kb())
             await state.clear()
             return
-
         uname = f"@{mod.username}" if mod.username else f"ID {tg_id}"
         await session.execute(delete(Moderator).where(Moderator.tg_id == tg_id))
         await session.commit()
@@ -426,3 +370,72 @@ async def fsm_remove_mod_id(message: Message, state: FSMContext) -> None:
 async def fsm_remove_mod_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Отменено.", reply_markup=get_moderator_manage_kb())
+
+
+# ═══════════════════════════════════════════════════════════════
+# Утилиты для группы
+# ═══════════════════════════════════════════════════════════════
+
+@router.message(Command("cleanup_kb"))
+async def cmd_cleanup_kb(message: Message) -> None:
+    """Убрать старую Reply-клавиатуру из группы."""
+    if not _is_admin(message.from_user.id):
+        return
+    from aiogram.types import ReplyKeyboardRemove
+    await message.bot.send_message(
+        config.GROUP_ID,
+        ".",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await message.answer("Клавиатура сброшена в группе.")
+
+
+@router.message(Command("post_app"))
+async def cmd_post_app(message: Message) -> None:
+    """
+    Опубликовать кнопку Mini App в группе.
+
+    ВАЖНО: Telegram запрещает web_app-кнопки в группах (BUTTON_TYPE_INVALID).
+    Поэтому используем обычную url-кнопку — она открывает браузер,
+    а не встроенный WebApp, то есть initData от Telegram не будет.
+
+    Правильный способ для группы: попросить участников открыть бота
+    в личке и нажать кнопку меню там — тогда initData будет корректным.
+    """
+    if not _is_admin(message.from_user.id):
+        return
+
+    bot_username = (await message.bot.get_me()).username
+
+    # url-кнопка открывает личку с ботом — там уже есть кнопка меню с WebApp
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="🏃 IT БЕГОТНЯ — открыть",
+            url=f"https://t.me/{bot_username}",
+        )
+    ]])
+    await message.bot.send_message(
+        config.GROUP_ID,
+        "🏃 <b>IT БЕГОТНЯ 21</b>\n"
+        "Нажми кнопку, перейди в личку бота и открой приложение кнопкой меню.",
+        reply_markup=kb,
+    )
+    await message.answer("✅ Опубликовано в группе.")
+
+
+@router.message(Command("set_menu_button"))
+async def cmd_set_menu_button(message: Message) -> None:
+    """Установить / обновить кнопку меню бота (синяя кнопка в личном чате)."""
+    if not _is_admin(message.from_user.id):
+        return
+    from aiogram.types import MenuButtonWebApp
+    try:
+        await message.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="🏃 Открыть",
+                web_app=WebAppInfo(url=WEBAPP_URL),
+            )
+        )
+        await message.answer(f"✅ Кнопка меню обновлена.\nURL: {WEBAPP_URL}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")

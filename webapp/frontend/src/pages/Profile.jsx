@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getProfile, getLeaderboard } from "../api";
+import { getProfile, getLeaderboard, getInitData } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 
@@ -27,15 +27,13 @@ function ProfileCard({ p }) {
   const progress = p.xp % 100;
   return (
     <div>
-      {/* Шапка */}
       <div className="card" style={{ marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{
             width: 52, height: 52, borderRadius: "50%",
             background: "var(--bg-input)", border: "1px solid var(--border)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 20, fontWeight: 700, color: "var(--text-muted)",
-            flexShrink: 0,
+            fontSize: 20, fontWeight: 700, color: "var(--text-muted)", flexShrink: 0,
           }}>
             {(p.school_nick || "?")[0].toUpperCase()}
           </div>
@@ -51,7 +49,6 @@ function ProfileCard({ p }) {
             <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>XP</div>
           </div>
         </div>
-
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
             <span className="hint" style={{ fontSize: 12 }}>До следующего уровня</span>
@@ -62,7 +59,6 @@ function ProfileCard({ p }) {
           </div>
         </div>
       </div>
-
       <StatGrid items={[
         { label: "Стрик",         value: `${p.streak} нед` },
         { label: "Сезон XP",      value: p.season_xp },
@@ -104,13 +100,44 @@ function Leaderboard({ data }) {
   );
 }
 
+// Ждём пока появится initData ИЗ ЛЮБОГО источника
+function useInitDataReady() {
+  const [ready, setReady] = useState(() => !!getInitData());
+
+  useEffect(() => {
+    if (ready) return;
+    let elapsed = 0;
+    const id = setInterval(() => {
+      elapsed += 100;
+      if (getInitData() || elapsed >= 3000) {
+        clearInterval(id);
+        setReady(true);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
+
+  return ready;
+}
+
 export default function Profile() {
   const [tab, setTab] = useState("profile");
-  const profileQ = useQuery({ queryKey: ["profile"],     queryFn: getProfile });
-  const leaderQ  = useQuery({ queryKey: ["leaderboard"], queryFn: getLeaderboard, enabled: tab === "leaders" });
+  const initReady = useInitDataReady();
 
-  if (profileQ.isLoading) return <Loader />;
-  if (profileQ.isError)   return <ErrorMessage error={profileQ.error} />;
+  const profileQ = useQuery({
+    queryKey: ["profile"],
+    queryFn: getProfile,
+    enabled: initReady,
+  });
+
+  const leaderQ = useQuery({
+    queryKey: ["leaderboard"],
+    queryFn: getLeaderboard,
+    enabled: initReady && tab === "leaders",
+  });
+
+  if (!initReady || profileQ.isLoading) return <Loader />;
+  if (profileQ.isError) return <ErrorMessage error={profileQ.error} />;
 
   return (
     <div>
