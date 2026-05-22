@@ -125,9 +125,11 @@ def _read_state(markup: types.InlineKeyboardMarkup) -> tuple[int | None, set[int
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def _get_participant_events(user_tg_id: int) -> list:
-    """Мероприятия, на которые пользователь записался (going), ещё не прошедшие."""
+    """Мероприятия, на которые пользователь записался (going), ещё не прошедшие,
+    и по которым у пользователя ещё нет отчёта."""
     now = datetime.now()
     async with async_session() as session:
+        # Мероприятия на которые записан
         result = await session.execute(
             select(Event)
             .join(EventParticipant, EventParticipant.event_id == Event.id)
@@ -140,7 +142,24 @@ async def _get_participant_events(user_tg_id: int) -> list:
             )
             .order_by(Event.event_date.asc())
         )
-        return list(result.scalars().all())
+        events = list(result.scalars().all())
+
+        if not events:
+            return []
+
+        # ID мероприятий по которым уже есть отчёт (любой статус)
+        event_ids = [e.id for e in events]
+        used_res = await session.execute(
+            select(Report.event_id).where(
+                Report.user_tg_id == user_tg_id,
+                Report.event_id.in_(event_ids),
+                Report.is_rejected == False,  # noqa: E712
+            )
+        )
+        used_event_ids = {row[0] for row in used_res.all()}
+
+        # Возвращаем только те мероприятия, по которым отчёта ещё нет
+        return [e for e in events if e.id not in used_event_ids]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
