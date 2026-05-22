@@ -273,21 +273,10 @@ async def get_leaderboard(tournament_id: int, limit: int = 10) -> list[dict]:
 # Финализация
 # ─────────────────────────────────────────────────────────────
 
-async def finalize_tournament(tournament_id: int) -> dict:
+async def finalize_tournament(tournament_id: int, bot=None) -> dict:
     """
     Завершить турнир: определить призёров, начислить XP, деактивировать.
-
-    Returns:
-        {
-            "title": str,
-            "type": str,
-            "placements": [
-                {"position": 1, "user": User|None, "score": float, "xp": int,
-                 "user_tg_id": int},
-                ...
-            ],
-        }
-        {"error": "not_found"} | {"error": "already_finalized"}
+    Если передан bot — отправить личные уведомления всем участникам.
     """
     async with async_session() as session:
         t_res = await session.execute(
@@ -298,6 +287,9 @@ async def finalize_tournament(tournament_id: int) -> dict:
             return {"error": "not_found"}
         if not tournament.is_active:
             return {"error": "already_finalized"}
+
+        tour_title = tournament.title
+        tour_type  = tournament.tournament_type
 
         # Топ участников
         p_res = await session.execute(
@@ -337,8 +329,43 @@ async def finalize_tournament(tournament_id: int) -> dict:
 
         await session.commit()
 
-    return {
-        "title":      tournament.title,
-        "type":       tournament.tournament_type,
+    result = {
+        "title":      tour_title,
+        "type":       tour_type,
         "placements": placements,
     }
+
+    # Уведомляем участников в личку
+    if bot and placements:
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for row in placements:
+            pos   = row["position"]
+            score = row["score"]
+            xp    = row["xp"]
+            uid   = row["user_tg_id"]
+
+            if tour_type in ("km", "team_km"):
+                score_str = f"{score:.1f} км"
+            elif tour_type == "minutes":
+                score_str = f"{int(score)} мин"
+            else:
+                score_str = f"{int(score)} дн"
+
+            medal = medals.get(pos, f"{pos}-е место")
+            xp_str = f"\n💠 +{xp} XP за призовое место!" if xp else ""
+            place_str = f"{medal} {pos}-е место" if pos <= 3 else f"{pos}-е место"
+
+            try:
+                await bot.send_message(
+                    uid,
+                    f"🏆 <b>Турнир завершён!</b>\n\n"
+                    f"<b>{tour_title}</b>\n"
+                    f"Твой результат: <b>{score_str}</b>\n"
+                    f"Итог: {place_str}"
+                    f"{xp_str}",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                log.warning("Не удалось уведомить участника %s о завершении турнира: %s", uid, e)
+
+    return result

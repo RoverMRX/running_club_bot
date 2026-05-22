@@ -72,6 +72,16 @@ def setup_scheduler(scheduler: AsyncIOScheduler, bot: Bot) -> None:
     )
     log.info("📬 Очередь уведомлений: каждые 10 секунд")
 
+    # ── Проверка истёкших челленджей: каждые 15 минут ──────────────
+    scheduler.add_job(
+        _expire_challenges,
+        trigger=IntervalTrigger(minutes=15),
+        args=[bot],
+        id="expire_challenges",
+        replace_existing=True,
+    )
+    log.info("⏰ Проверка истёкших челленджей: каждые 15 минут")
+
     print(f"   📅 Планировщик: дайджест вс 21:00 ({OMSK_TZ})")
 
 
@@ -84,7 +94,7 @@ async def _finalize_expired_tournaments(bot: Bot) -> None:
     expired = await get_expired_tournaments()
     for tournament in expired:
         try:
-            result = await finalize_tournament(tournament.id)
+            result = await finalize_tournament(tournament.id, bot=bot)
             if "error" in result:
                 log.warning(f"Ошибка финализации турнира {tournament.id}: {result['error']}")
                 continue
@@ -241,6 +251,65 @@ async def _notify_pending_events(bot: Bot) -> None:
 
             except Exception as e:
                 log.error(f"Ошибка уведомления о событии {event.id}: {e}")
+
+        await session.commit()
+
+
+async def _expire_challenges(bot) -> None:
+    """
+    Проверяет челленджи с истёкшим дедлайном, деактивирует их
+    и уведомляет автора и участников.
+    """
+    from datetime import datetime
+    from sqlalchemy import select
+    from database import async_session
+    from models import Challenge, ChallengeParticipant, User
+
+    now = datetime.now()
+
+    async with async_session() as session:
+        res = await session.execute(
+            select(Challenge).where(
+                Challenge.is_active == True,
+                Challenge.deadline != None,
+                Challenge.deadline <= now,
+            )
+        )
+        expired = res.scalars().all()
+
+        for ch in expired:
+            ch.is_active = False
+
+            # Собираем ID для уведомления: автор + участники
+            notify_ids: list[int] = [ch.user_id]
+
+            parts_res = await session.execute(
+                select(ChallengeParticipant).where(
+                    ChallengeParticipant.challenge_id == ch.id
+                )
+            )
+            for p in parts_res.scalars().all():
+                if p.user_id not in notify_ids:
+                    notify_ids.append(p.user_id)
+
+            ch_title    = ch.title
+            ch_progress = ch.current_value
+            ch_goal     = ch.goal_value
+
+            for uid in notify_ids:
+                is_author = (uid == ch.user_id)
+                role_str  = "твой" if is_author else "совместный"
+                try:
+                    await bot.send_message(
+                        uid,
+                        f"⏰ <b>Дедлайн истёк!</b>\n\n"
+                        f"Челлендж «{ch_title}» завершён.\n"
+                        f"Прогресс: {ch_progress:.1f} из {ch_goal:.1f}\n\n"
+                        f"Это был {role_str} челлендж.",
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    log.warning("Не удалось уведомить %s об истечении челленджа: %s", uid, e)
 
         await session.commit()
 

@@ -566,6 +566,7 @@ async def cb_vote_no(callback: types.CallbackQuery, bot: Bot):
     neg = result['neg_votes']
 
     if result['rejected']:
+        await _notify_athlete_rejected(bot, report_id, callback.from_user.id)
         try:
             await callback.message.edit_text(
                 callback.message.text.split("\n\nНужно")[0] +
@@ -631,6 +632,9 @@ async def cb_admin_reject(callback: types.CallbackQuery, bot: Bot):
     ok = await reject_report(report_id, rejected_by=callback.from_user.id)
     if not ok:
         return await callback.answer("Отчёт не найден или уже закрыт.")
+
+    # Уведомляем автора отчёта
+    await _notify_athlete_rejected(bot, report_id, callback.from_user.id)
 
     # Убираем кнопки с vote-сообщения в группе
     await _clear_vote_buttons_rejected(bot, report_id)
@@ -784,10 +788,19 @@ async def _notify_athlete(bot: Bot, ap: dict) -> None:
         f"\n🎯 <b>Личный рекорд!</b> +{config.XP_PR_BONUS} XP"
         if ap.get('is_pr') else ""
     )
+
+    # Завершённые челленджи
     completed_text = ""
     if ap.get('completed'):
         names = ", ".join(f"«{n}»" for n in ap['completed'])
         completed_text = f"\n🏆 Завершён челлендж: {names}"
+
+    # Продвинувшиеся (но не завершённые) челленджи
+    updated_text = ""
+    updated_only = [n for n in ap.get('updated', []) if n not in ap.get('completed', [])]
+    if updated_only:
+        names = ", ".join(f"«{n}»" for n in updated_only)
+        updated_text = f"\n🏃 Прогресс в челленджах: {names}"
 
     try:
         await bot.send_message(
@@ -796,8 +809,41 @@ async def _notify_athlete(bot: Bot, ap: dict) -> None:
             f"📝 {ap['km']} км\n"
             f"💠 +{ap['xp']} XP"
             f"{pr_line}"
+            f"{updated_text}"
             f"{completed_text}",
             parse_mode="HTML",
         )
     except Exception as e:
         log.warning("Не удалось уведомить атлета %s: %s", ap['user_tg_id'], e)
+
+
+async def _notify_athlete_rejected(bot: Bot, report_id: int, rejected_by_id: int) -> None:
+    """Уведомляет автора отчёта об отклонении."""
+    async with async_session() as session:
+        r_res = await session.execute(select(Report).where(Report.id == report_id))
+        report = r_res.scalar_one_or_none()
+        if not report:
+            return
+        user_tg_id = report.user_tg_id
+        km = report.km
+
+    # Определяем кто отклонил
+    async with async_session() as session:
+        u_res = await session.execute(select(User).where(User.tg_id == rejected_by_id))
+        rejector = u_res.scalar_one_or_none()
+
+    rejector_name = ""
+    if rejector:
+        rejector_name = f"@{rejector.username}" if rejector.username else rejector.school_nick
+
+    try:
+        await bot.send_message(
+            user_tg_id,
+            f"❌ <b>Отчёт отклонён</b>\n\n"
+            f"📝 {km} км\n"
+            f"👤 Отклонил: {rejector_name or 'администратор'}\n\n"
+            f"Если считаешь это ошибкой — обратись к модератору.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.warning("Не удалось уведомить атлета %s об отклонении: %s", user_tg_id, e)
