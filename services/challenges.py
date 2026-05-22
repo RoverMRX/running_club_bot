@@ -296,6 +296,9 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
                 if _is_goal_reached(ch):
                     ch.is_active = False
                     ch.result = "completed"
+                    xp_bonus = _challenge_xp(ch)
+                    if xp_bonus:
+                        await _grant_participant_xp(user_id, xp_bonus)
                     completed.append(ch.title)
 
             # Присоединённые челленджи — явный JOIN чтобы избежать lazy load
@@ -319,6 +322,14 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
                     part.current_time += minutes
                 updated.append(f"{ch.title} (совместный)")
 
+                # Проверяем выполнение для участника
+                if _is_goal_reached_for_participant(ch, part):
+                    part.result = "completed"
+                    xp_bonus = _challenge_xp(ch)
+                    if xp_bonus:
+                        await _grant_participant_xp(part.user_id, xp_bonus)
+                    completed.append(f"{ch.title} (совместный)")
+
     return {'updated': updated, 'completed': completed}
 
 
@@ -326,6 +337,49 @@ def _is_goal_reached(ch: Challenge) -> bool:
     """Проверяет, достигнута ли цель челленджа (для спринтов и забегов)."""
     if ch.ch_type in ("daily_km", "weekly_km", "monthly_km", "race"):
         return ch.current_value >= ch.goal_value > 0
+    return False
+
+
+def _challenge_xp(ch) -> int:
+    """XP за выполнение челленджа в зависимости от длительности."""
+    import config as _cfg
+    if ch.ch_type == "weekly_runs":
+        # Бессрочный — XP за стрик выдаётся в дайджесте, здесь 0
+        return 0
+    if not ch.started_at or not ch.deadline:
+        return _cfg.XP_CHALLENGE_WEEK
+    duration = (ch.deadline - ch.started_at).days
+    if duration <= 1:
+        return _cfg.XP_CHALLENGE_DAY
+    if duration <= 7:
+        return _cfg.XP_CHALLENGE_WEEK
+    if duration <= 62:  # ~2 месяца
+        return _cfg.XP_CHALLENGE_MONTH
+    return _cfg.XP_CHALLENGE_LONG
+
+
+async def _grant_participant_xp(user_id: int, xp: int) -> None:
+    """Начислить XP участнику за выполнение челленджа."""
+    if xp <= 0:
+        return
+    async with async_session() as session:
+        async with session.begin():
+            from models import User as _User
+            from sqlalchemy import select as _sel
+            u = await session.execute(_sel(_User).where(_User.tg_id == user_id))
+            user = u.scalar_one_or_none()
+            if user:
+                user.xp += xp
+                user.season_xp += xp
+                user.level = user.xp // 100
+
+
+def _is_goal_reached_for_participant(ch, part) -> bool:
+    """Достигнута ли цель участника (его личный прогресс)."""
+    if part.result:  # уже есть результат
+        return False
+    if ch.ch_type in ("daily_km", "weekly_km", "monthly_km", "race"):
+        return (part.current_value or 0) >= (ch.goal_value or 0) > 0
     return False
 
 

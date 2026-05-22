@@ -8,7 +8,9 @@ import {
   requestCloseChallenge,
   requestPauseChallenge,
   requestUnfreezeChallenge,
+  surrenderChallenge,
 } from "../api";
+import { useEffect, useRef } from "react";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 
@@ -115,6 +117,9 @@ function ChallengeDetail({ id, onBack }) {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showPauseForm, setShowPauseForm] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
+  const [showSurrender, setShowSurrender] = useState(false);
+  const [surrenderCountdown, setSurrenderCountdown] = useState(0);
+  const surrenderTimer = useRef(null);
 
   const { data: ch, isLoading, isError, error } = useQuery({
     queryKey: ["challenge", id],
@@ -135,6 +140,7 @@ function ChallengeDetail({ id, onBack }) {
   const requestCloseMut    = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
   const requestPauseMut    = useMutation({ mutationFn: () => requestPauseChallenge(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
   const requestUnfreezeMut = useMutation({ mutationFn: () => requestUnfreezeChallenge(id), onSuccess: inv });
+  const surrenderMut       = useMutation({ mutationFn: () => surrenderChallenge(id), onSuccess: () => { inv(); setShowSurrender(false); } });
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -234,6 +240,22 @@ function ChallengeDetail({ id, onBack }) {
                 {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
               </button>
             )}
+            {ch.is_participant && !ch.participants.find(p => p.user_id === ch.viewer_id)?.result && (
+              <button className="btn btn-danger" style={{ fontSize: 13 }}
+                onClick={() => {
+                  setShowSurrender(true);
+                  setSurrenderCountdown(10);
+                  if (surrenderTimer.current) clearInterval(surrenderTimer.current);
+                  surrenderTimer.current = setInterval(() => {
+                    setSurrenderCountdown(v => {
+                      if (v <= 1) { clearInterval(surrenderTimer.current); return 0; }
+                      return v - 1;
+                    });
+                  }, 1000);
+                }}>
+                🏳️ Сдаться
+              </button>
+            )}
             {ch.is_participant && (
               <button className="btn btn-secondary" disabled={leaveMut.isPending}
                 style={{ fontSize: 13 }}
@@ -253,6 +275,36 @@ function ChallengeDetail({ id, onBack }) {
       </div>
 
       {/* Форма присоединения */}
+      {/* Подтверждение сдачи */}
+      {showSurrender && (
+        <div className="card" style={{ marginTop: 0, borderColor: "var(--danger)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>
+            🏳️ Подтверди сдачу
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
+            Результат будет зафиксирован как не выполнен.
+            {ch.participants.find(p => p.user_id === ch.viewer_id)?.penalty && (
+              <span style={{ color: "var(--warning)" }}>
+                {" "}Ставка: {ch.participants.find(p => p.user_id === ch.viewer_id)?.penalty}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-danger"
+              disabled={surrenderCountdown > 0 || surrenderMut.isPending}
+              onClick={() => surrenderMut.mutate()}>
+              {surrenderCountdown > 0 ? `Подождите ${surrenderCountdown}с` : (surrenderMut.isPending ? "..." : "Подтвердить")}
+            </button>
+            <button className="btn btn-secondary" onClick={() => {
+              setShowSurrender(false);
+              if (surrenderTimer.current) clearInterval(surrenderTimer.current);
+            }}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Форма причины паузы */}
       {showPauseForm && ch.is_owner && ch.is_active && !ch.is_paused && (
         <div className="card" style={{ marginTop: 0 }}>

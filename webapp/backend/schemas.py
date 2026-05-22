@@ -33,6 +33,7 @@ class ChallengeParticipantOut(BaseModel):
     penalty:       str | None
     current_runs:  int
     current_value: float
+    result:        str | None = None
 
     class Config:
         from_attributes = True
@@ -64,6 +65,7 @@ class ChallengeOut(BaseModel):
     result:              str | None = None   # completed / failed / closed
     my_current_value:    float = 0.0         # прогресс текущего юзера (участника)
     my_current_runs:     int   = 0
+    viewer_id:           int | None = None    # tg_id смотрящего
     participants:        list[ChallengeParticipantOut] = []
 
     class Config:

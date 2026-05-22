@@ -80,6 +80,7 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         participants.append(ChallengeParticipantOut(
             user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
             penalty=p.penalty, current_runs=p.current_runs, current_value=p.current_value,
+            result=p.result,
         ))
 
     is_owner = viewer_id is not None and ch.user_id == viewer_id
@@ -108,6 +109,7 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         result=ch.result,
         my_current_value=my_current_value,
         my_current_runs=my_current_runs,
+        viewer_id=viewer_id,
         participants=participants,
     )
 
@@ -350,6 +352,53 @@ async def request_close_challenge(
         logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")
 
     return OkResponse(ok=True, reason="Запрос отправлен администратору. Ожидай решения.")
+
+
+# ─── Сдаться (участник → result=failed + публикация) ───────
+
+@router.post("/{challenge_id}/surrender", response_model=OkResponse)
+async def surrender_challenge(
+    challenge_id: int,
+    tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Участник сдаётся — result=failed, публикация в группу со ставкой."""
+    user_id = tg_user["id"]
+    ch_res = await db.execute(select(Challenge).where(Challenge.id == challenge_id))
+    ch = ch_res.scalar_one_or_none()
+    if not ch:
+        return OkResponse(ok=False, reason="Челлендж не найден.")
+    if not ch.is_active:
+        return OkResponse(ok=False, reason="Челлендж уже завершён.")
+
+    # Проверяем что участник
+    from models import ChallengeParticipant as CP
+    part_res = await db.execute(
+        select(CP).where(CP.challenge_id == challenge_id, CP.user_id == user_id)
+    )
+    part = part_res.scalar_one_or_none()
+    if not part:
+        return OkResponse(ok=False, reason="Ты не участник этого челленджа.")
+    if part.result:
+        return OkResponse(ok=False, reason="Твоё участие уже завершено.")
+
+    part.result = "failed"
+    await db.commit()
+
+    # Публикуем в группу
+    nick_res = await db.execute(select(User.school_nick, User.username).where(User.tg_id == user_id))
+    u_row = nick_res.one_or_none()
+    name = f"@{u_row[1]}" if u_row and u_row[1] else (u_row[0] if u_row else str(user_id))
+    penalty_str = f" 💰 Ставка: {part.penalty}" if part.penalty else ""
+    try:
+        from notify import queue_message as _qm
+        import config as _cfg
+        if _cfg.GROUP_ID:
+            await _qm(db, _cfg.GROUP_ID,
+                f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}")
+    except Exception:
+        pass
+
+    return OkResponse(ok=True, reason="Ты вышел из челленджа. Результат зафиксирован как не выполнен.")
 
 
 # ─── Запрос на паузу (автор → уведомление admin) ───────────

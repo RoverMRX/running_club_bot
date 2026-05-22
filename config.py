@@ -35,3 +35,10 @@ XP_PR_BONUS: int  = int(os.getenv("XP_PR_BONUS",  "50"))   # Личный рек
 
 # Milestone-стрики и их XP: {недели: xp}
 STREAK_MILESTONES: dict[int, int] = {4: 100, 8: 150, 12: 200, 20: 300}
+
+# XP за выполнение челленджа (по длительности)
+XP_CHALLENGE_DAY:    int = int(os.getenv("XP_CHALLENGE_DAY",    "200"))  # < 1 дня
+XP_CHALLENGE_WEEK:   int = int(os.getenv("XP_CHALLENGE_WEEK",   "300"))  # до недели
+XP_CHALLENGE_MONTH:  int = int(os.getenv("XP_CHALLENGE_MONTH",  "400"))  # до месяца
+XP_CHALLENGE_LONG:   int = int(os.getenv("XP_CHALLENGE_LONG",   "500"))  # > 2 месяцев
+XP_CHALLENGE_STREAK: int = int(os.getenv("XP_CHALLENGE_STREAK", "150"))  # стрик weekly_runs

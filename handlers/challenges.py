@@ -698,6 +698,19 @@ async def cb_my_open(call: CallbackQuery) -> None:
         else:
             builder.button(text="⏳ Пауза на рассмотрении", callback_data="noop")
 
+    # Кнопка сдаться для участника (не автора)
+    if not is_owner:
+        # Проверяем есть ли активное участие
+        async with async_session() as _s:
+            from models import ChallengeParticipant as _CP
+            _pr = await _s.execute(select(_CP).where(
+                _CP.challenge_id == ch.id, _CP.user_id == call.from_user.id
+            ))
+            _part = _pr.scalar_one_or_none()
+        if _part and not _part.result and ch.is_active:
+            builder.button(text="🏳️ Сдаться",
+                           callback_data=f"ch_surrender_ask:{ch.id}:{page}")
+
     builder.button(text="⬅️ К списку", callback_data=f"my_page:{page}")
     builder.adjust(1)
 
@@ -901,6 +914,90 @@ async def cb_close_no(callback: CallbackQuery) -> None:
 
     await callback.message.edit_text(callback.message.text + "\n\n❌ <b>В завершении отказано.</b>")
     await callback.answer("Запрос отклонён.")
+
+# ─── Сдаться (участник, с подтверждением) ───────────────────
+
+@router.callback_query(F.data.startswith("ch_surrender_ask:"))
+async def cb_surrender_ask(call: CallbackQuery) -> None:
+    """Показываем подтверждение сдачи с таймером."""
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    import time
+    expires_at = int(time.time()) + 10
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏳ Подождите 10с...", callback_data="noop")
+    kb.button(text="❌ Отмена", callback_data=f"my_open:{challenge_id}:{page}")
+    kb.adjust(1)
+    await call.message.edit_text(
+        "🏳️ <b>Подтверди сдачу</b>\n\n"
+        "Результат будет зафиксирован как <b>не выполнен</b>.\n"
+        "Кнопка подтверждения появится через 10 секунд.",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer()
+    # Через 10 сек обновляем кнопку
+    import asyncio
+    await asyncio.sleep(10)
+    try:
+        kb2 = InlineKeyboardBuilder()
+        kb2.button(text="✅ Подтвердить сдачу",
+                   callback_data=f"ch_surrender_confirm:{challenge_id}:{page}")
+        kb2.button(text="❌ Отмена", callback_data=f"my_open:{challenge_id}:{page}")
+        kb2.adjust(1)
+        await call.message.edit_reply_markup(reply_markup=kb2.as_markup())
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("ch_surrender_confirm:"))
+async def cb_surrender_confirm(call: CallbackQuery) -> None:
+    """Подтверждение сдачи участника."""
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    user_id = call.from_user.id
+
+    async with async_session() as session:
+        from models import ChallengeParticipant as _CP
+        p_res = await session.execute(
+            select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == user_id)
+        )
+        part = p_res.scalar_one_or_none()
+        if not part or part.result:
+            await call.answer("Участие уже завершено.", show_alert=True)
+            return
+        ch_res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = ch_res.scalar_one_or_none()
+        part.result = "failed"
+        title = ch.title if ch else "Челлендж"
+        penalty = part.penalty
+        await session.commit()
+
+    # Публикуем в группу
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        from models import User as _User
+        u = await session.execute(_sel(_User).where(_User.tg_id == user_id))
+        user = u.scalar_one_or_none()
+    name = f"@{user.username}" if user and user.username else (user.school_nick if user else str(user_id))
+    penalty_str = f" 💰 Ставка: {penalty}" if penalty else ""
+
+    from services.scheduler import _post_to_digest
+    await _post_to_digest(
+        call.bot,
+        f"🏳️ <b>{name}</b> сдался в челлендже «{title}».{penalty_str}"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ К списку", callback_data=f"my_page:{page}")
+    await call.message.edit_text(
+        f"🏳️ Ты вышел из челленджа «{title}».\n"
+        f"Результат зафиксирован как не выполнен.{penalty_str}",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer("Сдача зафиксирована.")
+
 
 # ─── Запрос завершения через бота (FSM) ─────────────────────
 
