@@ -257,8 +257,8 @@ async def _notify_pending_events(bot: Bot) -> None:
 
 async def _expire_challenges(bot) -> None:
     """
-    Проверяет челленджи с истёкшим дедлайном, деактивирует их
-    и уведомляет автора и участников.
+    Проверяет челленджи с истёкшим дедлайном, деактивирует их,
+    определяет результат и уведомляет автора, участников и группу.
     """
     from datetime import datetime
     from sqlalchemy import select
@@ -278,11 +278,28 @@ async def _expire_challenges(bot) -> None:
         expired = res.scalars().all()
 
         for ch in expired:
+            # Определяем результат
+            if ch.ch_type in ("daily_km", "weekly_km", "monthly_km"):
+                is_completed = ch.current_value >= ch.goal_value > 0
+            elif ch.ch_type == "race":
+                is_completed = ch.current_value >= ch.goal_value > 0
+            else:
+                is_completed = False
+
             ch.is_active = False
+            ch.result = "completed" if is_completed else "failed"
+
+            # Получаем автора для публикации
+            u_res = await session.execute(
+                select(User).where(User.tg_id == ch.user_id)
+            )
+            author = u_res.scalar_one_or_none()
+            author_name = f"@{author.username}" if author and author.username else (
+                author.school_nick if author else str(ch.user_id)
+            )
 
             # Собираем ID для уведомления: автор + участники
             notify_ids: list[int] = [ch.user_id]
-
             parts_res = await session.execute(
                 select(ChallengeParticipant).where(
                     ChallengeParticipant.challenge_id == ch.id
@@ -295,21 +312,46 @@ async def _expire_challenges(bot) -> None:
             ch_title    = ch.title
             ch_progress = ch.current_value
             ch_goal     = ch.goal_value
+            ch_penalty  = ch.penalty
+            result      = ch.result
 
+            # Уведомляем участников в личку
             for uid in notify_ids:
                 is_author = (uid == ch.user_id)
                 role_str  = "твой" if is_author else "совместный"
-                try:
-                    await bot.send_message(
-                        uid,
-                        f"⏰ <b>Дедлайн истёк!</b>\n\n"
-                        f"Челлендж «{ch_title}» завершён.\n"
-                        f"Прогресс: {ch_progress:.1f} из {ch_goal:.1f}\n\n"
-                        f"Это был {role_str} челлендж.",
-                        parse_mode="HTML",
+                if result == "completed":
+                    msg = (
+                        f"🏆 <b>Челлендж выполнен!</b>\n\n"
+                        f"«{ch_title}» завершён успешно.\n"
+                        f"Результат: {ch_progress:.1f} из {ch_goal:.1f}\n\n"
+                        f"Это был {role_str} челлендж. Отличная работа! 💪"
                     )
+                else:
+                    penalty_str = f"\n💰 Ставка: {ch_penalty}" if ch_penalty else ""
+                    msg = (
+                        f"😔 <b>Дедлайн истёк</b>\n\n"
+                        f"Челлендж «{ch_title}» не выполнен.\n"
+                        f"Прогресс: {ch_progress:.1f} из {ch_goal:.1f}"
+                        f"{penalty_str}\n\n"
+                        f"Это был {role_str} челлендж."
+                    )
+                try:
+                    await bot.send_message(uid, msg, parse_mode="HTML")
                 except Exception as e:
                     log.warning("Не удалось уведомить %s об истечении челленджа: %s", uid, e)
+
+            # Публикуем в болталку
+            if result == "completed":
+                group_msg = (
+                    f"🏆 <b>{author_name}</b> выполнил челлендж «{ch_title}»! "
+                    f"Цель достигнута: {ch_progress:.1f} км 💪"
+                )
+            else:
+                penalty_str = f" 💰 {ch_penalty}" if ch_penalty else ""
+                group_msg = (
+                    f"😔 <b>{author_name}</b> не выполнил челлендж «{ch_title}».{penalty_str}"
+                )
+            await _post_to_digest(bot, group_msg)
 
         await session.commit()
 
@@ -354,3 +396,17 @@ async def _send_pending_notifications(bot) -> None:
                 )
 
         await session.commit()
+
+async def _post_to_digest(bot, text: str) -> None:
+    """Публикует сообщение в топик болталки группы."""
+    if not config.GROUP_ID:
+        return
+    try:
+        await bot.send_message(
+            config.GROUP_ID,
+            text,
+            message_thread_id=config.DIGEST_THREAD_ID,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.warning("Не удалось опубликовать в болталку: %s", e)

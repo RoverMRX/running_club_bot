@@ -128,6 +128,8 @@ async def send_weekly_digest(bot: Bot) -> None:
                     )
             else:
                 user.streak = 0
+                ch.result = "failed"
+                ch.is_active = False
                 penalty_str = f"💰 {ch.penalty}" if ch.penalty else ""
                 debtors.append(
                     f"• {name} ({ch.current_runs}/{ch.goal_runs}) {penalty_str}".strip()

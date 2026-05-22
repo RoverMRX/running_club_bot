@@ -6,6 +6,8 @@ import {
   getChallenge, createChallenge,
   joinChallenge, leaveChallenge, closeChallenge,
   requestCloseChallenge,
+  requestPauseChallenge,
+  requestUnfreezeChallenge,
 } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
@@ -43,7 +45,10 @@ function goalStr(ch) {
 }
 
 function progressValue(ch) {
-  return ch.ch_type === "weekly_runs" ? ch.current_runs  : ch.current_value;
+  if (ch.is_participant && !ch.is_owner) {
+    return ch.ch_type === "weekly_runs" ? ch.my_current_runs : ch.my_current_value;
+  }
+  return ch.ch_type === "weekly_runs" ? ch.current_runs : ch.current_value;
 }
 function progressMax(ch) {
   return ch.ch_type === "weekly_runs" ? ch.goal_runs : ch.goal_value;
@@ -53,6 +58,12 @@ function progressPct(ch) {
   return max > 0 ? Math.min(100, Math.round(progressValue(ch) / max * 100)) : 0;
 }
 function progressLabel(ch) {
+  if (ch.is_participant && !ch.is_owner) {
+    if (ch.ch_type === "weekly_runs") {
+      return `${ch.my_current_runs} / ${ch.goal_runs} пробежек`;
+    }
+    return `${(ch.my_current_value || 0).toFixed(1)} / ${ch.goal_value.toFixed(1)} км`;
+  }
   if (ch.ch_type === "weekly_runs") return `${ch.current_runs} / ${ch.goal_runs} пробежек`;
   return `${ch.current_value.toFixed(1)} / ${ch.goal_value.toFixed(1)} км`;
 }
@@ -102,6 +113,8 @@ function ChallengeDetail({ id, onBack }) {
   const [penalty, setPenalty] = useState("");
   const [showJoinForm, setShowJoinForm] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showPauseForm, setShowPauseForm] = useState(false);
+  const [pauseReason, setPauseReason] = useState("");
 
   const { data: ch, isLoading, isError, error } = useQuery({
     queryKey: ["challenge", id],
@@ -119,7 +132,9 @@ function ChallengeDetail({ id, onBack }) {
   const joinMut  = useMutation({ mutationFn: () => joinChallenge(id, penalty || null), onSuccess: inv });
   const leaveMut = useMutation({ mutationFn: () => leaveChallenge(id), onSuccess: () => { inv(); onBack(); } });
   const closeMut        = useMutation({ mutationFn: () => closeChallenge(id), onSuccess: () => { inv(); onBack(); } });
-  const requestCloseMut = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
+  const requestCloseMut    = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
+  const requestPauseMut    = useMutation({ mutationFn: () => requestPauseChallenge(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
+  const requestUnfreezeMut = useMutation({ mutationFn: () => requestUnfreezeChallenge(id), onSuccess: inv });
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -160,6 +175,21 @@ function ChallengeDetail({ id, onBack }) {
             ❄️ Заморожен до разморозки администратором
           </div>
         )}
+        {!ch.is_active && ch.result === "completed" && (
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--success)", fontWeight: 500 }}>
+            🏆 Выполнен
+          </div>
+        )}
+        {!ch.is_active && ch.result === "failed" && (
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--danger)", fontWeight: 500 }}>
+            😔 Не выполнен
+          </div>
+        )}
+        {!ch.is_active && ch.result === "closed" && (
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
+            🏁 Завершён по запросу
+          </div>
+        )}
 
         <div className="divider" />
 
@@ -167,7 +197,7 @@ function ChallengeDetail({ id, onBack }) {
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase",
             letterSpacing: "0.04em", color: "var(--text-muted)", marginBottom: 6 }}>
-            {ch.is_owner ? "Мой прогресс" : "Прогресс автора"}
+            {ch.is_owner ? "Мой прогресс" : ch.is_participant ? "Мой прогресс" : "Прогресс автора"}
           </div>
           <ProgressBar ch={ch} />
         </div>
@@ -175,7 +205,7 @@ function ChallengeDetail({ id, onBack }) {
         {/* Кнопки действий */}
         {ch.is_active && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {ch.is_owner && !ch.close_requested && (
+            {ch.is_owner && !ch.close_requested && !ch.pause_requested && !ch.is_paused && (
               <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
                 onClick={() => requestCloseMut.mutate()}>
                 {requestCloseMut.isPending ? "..." : "🏁 Запросить завершение"}
@@ -185,6 +215,24 @@ function ChallengeDetail({ id, onBack }) {
               <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
                 ⏳ Запрос на завершение отправлен администратору
               </div>
+            )}
+            {ch.is_owner && !ch.is_paused && !ch.pause_requested && !ch.close_requested && (
+              <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
+                onClick={() => setShowPauseForm(v => !v)}>
+                ⏸ Запросить паузу
+              </button>
+            )}
+            {ch.is_owner && ch.pause_requested && !ch.is_paused && (
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                ⏳ Запрос на паузу отправлен администратору
+              </div>
+            )}
+            {ch.is_owner && ch.is_paused && (
+              <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
+                disabled={requestUnfreezeMut.isPending}
+                onClick={() => requestUnfreezeMut.mutate()}>
+                {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
+              </button>
             )}
             {ch.is_participant && (
               <button className="btn btn-secondary" disabled={leaveMut.isPending}
@@ -205,6 +253,31 @@ function ChallengeDetail({ id, onBack }) {
       </div>
 
       {/* Форма присоединения */}
+      {/* Форма причины паузы */}
+      {showPauseForm && ch.is_owner && ch.is_active && !ch.is_paused && (
+        <div className="card" style={{ marginTop: 0 }}>
+          <div className="form-group">
+            <label>Причина паузы (необязательно)</label>
+            <input value={pauseReason} onChange={e => setPauseReason(e.target.value)}
+              placeholder="Например: травма, командировка..." />
+          </div>
+          {requestPauseMut.data && !requestPauseMut.data.ok && (
+            <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 8 }}>
+              {requestPauseMut.data.reason}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary" disabled={requestPauseMut.isPending}
+              onClick={() => requestPauseMut.mutate()}>
+              {requestPauseMut.isPending ? "..." : "Отправить запрос"}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowPauseForm(false)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
       {showJoinForm && ch.is_active && !ch.is_owner && !ch.is_participant && (
         <div className="card" style={{ marginTop: 0 }}>
           <div className="form-group">

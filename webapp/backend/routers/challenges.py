@@ -38,17 +38,21 @@ def _make_bot():
     return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 
-async def _notify_admins(text: str, kb=None) -> None:
-    """Уведомить всех администраторов через бота."""
+async def _notify_admins(text: str, kb=None, db: AsyncSession = None) -> None:
+    """Уведомить всех администраторов через pending_notifications."""
+    import json
+    from notify import queue_message
     try:
         from config import ADMIN_IDS
-        bot = _make_bot()
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(admin_id, text, reply_markup=kb)
-            except Exception:
-                pass
-        await bot.session.close()
+        kb_json = kb.model_dump_json() if kb else None
+        if db:
+            for admin_id in ADMIN_IDS:
+                await queue_message(db, admin_id, text, kb_json)
+        else:
+            from database import async_session as _async_session
+            async with _async_session() as _db:
+                for admin_id in ADMIN_IDS:
+                    await queue_message(_db, admin_id, text, kb_json)
     except Exception as e:
         import logging
         logging.getLogger("challenges").warning(f"Ошибка уведомления админов: {e}")
@@ -66,9 +70,13 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
     )
     participants = []
     is_participant = False
+    my_current_value = 0.0
+    my_current_runs  = 0
     for p, u in parts_res.all():
         if viewer_id and u.tg_id == viewer_id:
             is_participant = True
+            my_current_value = p.current_value or 0.0
+            my_current_runs  = p.current_runs  or 0
         participants.append(ChallengeParticipantOut(
             user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
             penalty=p.penalty, current_runs=p.current_runs, current_value=p.current_value,
@@ -96,6 +104,10 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         days_left=days_left,
         is_paused=is_paused,
         close_requested=bool(ch.close_requested),
+        pause_requested=bool(ch.pause_requested),
+        result=ch.result,
+        my_current_value=my_current_value,
+        my_current_runs=my_current_runs,
         participants=participants,
     )
 
@@ -340,6 +352,103 @@ async def request_close_challenge(
     return OkResponse(ok=True, reason="Запрос отправлен администратору. Ожидай решения.")
 
 
+# ─── Запрос на паузу (автор → уведомление admin) ───────────
+
+class PauseRequest(BaseModel):
+    reason: str = ""
+
+
+@router.post("/{challenge_id}/request-pause", response_model=OkResponse)
+async def request_pause_challenge(
+    challenge_id: int, body: PauseRequest,
+    tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Автор просит поставить челлендж на паузу. Причина сохраняется в БД."""
+    user_id = tg_user["id"]
+    ch_res = await db.execute(select(Challenge).where(Challenge.id == challenge_id))
+    ch = ch_res.scalar_one_or_none()
+    if not ch:
+        return OkResponse(ok=False, reason="Челлендж не найден.")
+    if ch.user_id != user_id:
+        return OkResponse(ok=False, reason="Только автор может запросить паузу.")
+    if not ch.is_active:
+        return OkResponse(ok=False, reason="Челлендж уже завершён.")
+    if ch.pause_requested:
+        return OkResponse(ok=False, reason="Запрос уже отправлен, ожидай решения администратора.")
+    if ch.pause_until and ch.pause_until > datetime.now():
+        return OkResponse(ok=False, reason="Челлендж уже на паузе.")
+
+    ch.pause_requested = True
+    ch.pause_reason = body.reason.strip() if body.reason else None
+    await db.commit()
+
+    nick_res = await db.execute(select(User.school_nick).where(User.tg_id == user_id))
+    author_nick = nick_res.scalar_one_or_none() or f"ID {user_id}"
+
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="⏸ Одобрить паузу",  callback_data=f"ch_pause_ok:{challenge_id}")
+        kb.button(text="❌ Отказать",        callback_data=f"ch_pause_no:{challenge_id}")
+        kb.adjust(2)
+
+        reason_str = f"\nПричина: {ch.pause_reason}" if ch.pause_reason else ""
+        text = (
+            f"⏸ <b>Запрос на паузу челленджа</b>\n\n"
+            f"<b>{ch.title}</b>\n"
+            f"Автор: {author_nick}"
+            f"{reason_str}\n\n"
+            f"Одобрить паузу?"
+        )
+        await _notify_admins(text, kb.as_markup())
+    except Exception as e:
+        import logging
+        logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")
+
+    return OkResponse(ok=True, reason="Запрос на паузу отправлен администратору. Ожидай решения.")
+
+
+# ─── Запрос на разморозку (автор → уведомление admin) ───────
+
+@router.post("/{challenge_id}/request-unfreeze", response_model=OkResponse)
+async def request_unfreeze_challenge(
+    challenge_id: int,
+    tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Автор просит снять паузу с челленджа."""
+    user_id = tg_user["id"]
+    ch_res = await db.execute(select(Challenge).where(Challenge.id == challenge_id))
+    ch = ch_res.scalar_one_or_none()
+    if not ch:
+        return OkResponse(ok=False, reason="Челлендж не найден.")
+    if ch.user_id != user_id:
+        return OkResponse(ok=False, reason="Только автор может запросить разморозку.")
+    if not (ch.pause_until and ch.pause_until > datetime.now()):
+        return OkResponse(ok=False, reason="Челлендж не на паузе.")
+
+    nick_res = await db.execute(select(User.school_nick).where(User.tg_id == user_id))
+    author_nick = nick_res.scalar_one_or_none() or f"ID {user_id}"
+
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="▶️ Разморозить",  callback_data=f"ch_unfreeze_ok:{challenge_id}")
+        kb.button(text="❌ Отказать",     callback_data=f"ch_unfreeze_no:{challenge_id}")
+        kb.adjust(2)
+        text = (
+            f"▶️ <b>Запрос на разморозку челленджа</b>\n\n"
+            f"<b>{ch.title}</b>\n"
+            f"Автор: {author_nick}\n\n"
+            f"Разморозить челлендж?"
+        )
+        await _notify_admins(text, kb.as_markup())
+    except Exception as e:
+        import logging
+        logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")
+
+    return OkResponse(ok=True, reason="Запрос на разморозку отправлен администратору.")
+
+
 # ─── Заморозка (только admin через Mini App) ────────────────
 
 class FreezeRequest(BaseModel):
@@ -366,19 +475,12 @@ async def freeze_challenge(
     ch.pause_until = datetime.now() + timedelta(days=body.days)
     await db.commit()
 
-    # Уведомляем автора
-    try:
-        from config import BOT_TOKEN
-        from aiogram import Bot
-        bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(
-            ch.user_id,
-            f"❄️ Твой челлендж <b>«{ch.title}»</b> заморожен на {body.days} дней.\n"
-            f"Пробежки не будут засчитываться до {ch.pause_until.strftime('%d.%m.%Y')}.",
-            parse_mode="HTML",
-        )
-        await bot.session.close()
-    except Exception:
-        pass
+    # Уведомляем автора через pending_notifications
+    from notify import queue_message as _qm
+    await _qm(
+        db, ch.user_id,
+        f"❄️ Твой челлендж <b>«{ch.title}»</b> заморожен на {body.days} дней.\n"
+        f"Пробежки не будут засчитываться до {ch.pause_until.strftime('%d.%m.%Y')}.",
+    )
 
     return OkResponse(ok=True, reason=f"Челлендж заморожен на {body.days} дней.")

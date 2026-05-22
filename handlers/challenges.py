@@ -35,6 +35,24 @@ from services.challenges import create_challenge, get_type_name, get_public_chal
 from database import async_session
 from models import Challenge
 from sqlalchemy import select
+import config
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in config.ADMIN_IDS
+
+async def _notify_admins_challenge(bot, text: str, kb=None) -> None:
+    """Отправляет уведомление всем админам в личку."""
+    from models import Moderator
+    async with async_session() as session:
+        from sqlalchemy import select as _sel
+        mods = await session.execute(_sel(Moderator))
+        mod_ids = [m.tg_id for m in mods.scalars().all()]
+    recipients = list(config.ADMIN_IDS) + [m for m in mod_ids if m not in config.ADMIN_IDS]
+    for uid in recipients:
+        try:
+            await bot.send_message(uid, text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -586,6 +604,11 @@ def _challenges_list_kb(challenges: list, page: int, total: int, prefix: str):
 class JoinChallengeStates(StatesGroup):
     enter_penalty = State()
 
+# FSM для запросов завершения/паузы через бота
+class ChallengeRequestStates(StatesGroup):
+    enter_close_reason = State()
+    enter_pause_reason = State()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # МОИ ЧЕЛЛЕНДЖИ
@@ -654,11 +677,31 @@ async def cb_my_open(call: CallbackQuery) -> None:
     text = _build_my_card_text(ch, participants)
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from datetime import datetime as _dt
     builder = InlineKeyboardBuilder()
+
+    is_paused = bool(ch.pause_until and ch.pause_until > _dt.now())
+
+    if ch.is_active:
+        if not ch.close_requested:
+            builder.button(text="🏁 Запросить завершение",
+                           callback_data=f"bot_req_close:{ch.id}:{page}")
+        else:
+            builder.button(text="⏳ Завершение на рассмотрении", callback_data="noop")
+
+        if is_paused:
+            builder.button(text="▶️ Запросить разморозку",
+                           callback_data=f"bot_req_unfreeze:{ch.id}:{page}")
+        elif not ch.pause_requested:
+            builder.button(text="⏸ Запросить паузу",
+                           callback_data=f"bot_req_pause:{ch.id}:{page}")
+        else:
+            builder.button(text="⏳ Пауза на рассмотрении", callback_data="noop")
+
     builder.button(text="⬅️ К списку", callback_data=f"my_page:{page}")
     builder.adjust(1)
 
-    await call.message.edit_text(text, reply_markup=builder.as_markup())
+    await call.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await call.answer()
 
 
@@ -810,6 +853,7 @@ async def cb_close_ok(callback: CallbackQuery) -> None:
             return
         ch.is_active = False
         ch.close_requested = False
+        ch.result = "closed"
         owner_id = ch.user_id
         title = ch.title
         await session.commit()
@@ -819,6 +863,12 @@ async def cb_close_ok(callback: CallbackQuery) -> None:
         await callback.bot.send_message(owner_id, msg, parse_mode="HTML")
     except Exception:
         pass
+
+    from services.scheduler import _post_to_digest
+    await _post_to_digest(
+        callback.bot,
+        f"🏁 Челлендж <b>\u00ab{title}\u00bb</b> завершён по согласованию с администратором.",
+    )
 
     await callback.message.edit_text(callback.message.text + "\n\n✅ <b>Завершение разрешено.</b>")
     await callback.answer("Челлендж закрыт.")
@@ -850,4 +900,367 @@ async def cb_close_no(callback: CallbackQuery) -> None:
         pass
 
     await callback.message.edit_text(callback.message.text + "\n\n❌ <b>В завершении отказано.</b>")
+    await callback.answer("Запрос отклонён.")
+
+# ─── Запрос завершения через бота (FSM) ─────────────────────
+
+@router.callback_query(F.data.startswith("bot_req_close:"))
+async def cb_bot_req_close_start(call: CallbackQuery, state: FSMContext) -> None:
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    await state.set_state(ChallengeRequestStates.enter_close_reason)
+    await state.update_data(challenge_id=challenge_id, page=page)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Без причины ➡️", callback_data="bot_close_no_reason")
+    kb.adjust(1)
+    await call.message.edit_text(
+        "🏁 <b>Запрос на завершение челленджа</b>\n\n"
+        "Укажи причину (или нажми «Без причины»):",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "bot_close_no_reason", ChallengeRequestStates.enter_close_reason)
+async def cb_bot_close_no_reason(call: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    await _do_bot_request_close(call.message, call.bot, call.from_user.id,
+                                 data["challenge_id"], data["page"], reason=None)
+    await call.answer()
+
+
+@router.message(ChallengeRequestStates.enter_close_reason)
+async def step_bot_close_reason(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    await _do_bot_request_close(message, message.bot, message.from_user.id,
+                                 data["challenge_id"], data["page"], reason=message.text.strip())
+
+
+async def _do_bot_request_close(obj, bot, user_id: int, challenge_id: int, page: int, reason) -> None:
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch or ch.user_id != user_id or not ch.is_active or ch.close_requested:
+            await obj.answer("Невозможно отправить запрос.")
+            return
+        ch.close_requested = True
+        title = ch.title
+        if hasattr(ch, 'pause_reason'):
+            ch.pause_reason = reason  # переиспользуем поле для причины закрытия
+        await session.commit()
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        from models import User as _User
+        u = await session.execute(_sel(_User).where(_User.tg_id == user_id))
+        user = u.scalar_one_or_none()
+    author_nick = f"@{user.username}" if user and user.username else (user.school_nick if user else str(user_id))
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Разрешить завершение", callback_data=f"ch_close_ok:{challenge_id}")
+    kb.button(text="❌ Отказать",             callback_data=f"ch_close_no:{challenge_id}")
+    kb.adjust(2)
+
+    reason_str = f"\nПричина: {reason}" if reason else ""
+    text = (
+        f"🏁 <b>Запрос на завершение челленджа</b>\n\n"
+        f"<b>{title}</b>\n"
+        f"Автор: {author_nick}"
+        f"{reason_str}\n\n"
+        f"Разрешить досрочное завершение?"
+    )
+    await _notify_admins_challenge(bot, text, kb.as_markup())
+    await obj.answer(f"✅ Запрос на завершение «{title}» отправлен администратору.")
+
+
+# ─── Запрос паузы через бота (FSM) ───────────────────────────
+
+@router.callback_query(F.data.startswith("bot_req_pause:"))
+async def cb_bot_req_pause_start(call: CallbackQuery, state: FSMContext) -> None:
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    await state.set_state(ChallengeRequestStates.enter_pause_reason)
+    await state.update_data(challenge_id=challenge_id, page=page)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Без причины ➡️", callback_data="bot_pause_no_reason")
+    kb.adjust(1)
+    await call.message.edit_text(
+        "⏸ <b>Запрос на паузу челленджа</b>\n\n"
+        "Укажи причину (или нажми «Без причины»):",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "bot_pause_no_reason", ChallengeRequestStates.enter_pause_reason)
+async def cb_bot_pause_no_reason(call: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    await _do_bot_request_pause(call.message, call.bot, call.from_user.id,
+                                 data["challenge_id"], data["page"], reason=None)
+    await call.answer()
+
+
+@router.message(ChallengeRequestStates.enter_pause_reason)
+async def step_bot_pause_reason(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    await _do_bot_request_pause(message, message.bot, message.from_user.id,
+                                 data["challenge_id"], data["page"], reason=message.text.strip())
+
+
+async def _do_bot_request_pause(obj, bot, user_id: int, challenge_id: int, page: int, reason) -> None:
+    from datetime import datetime as _dt
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch or ch.user_id != user_id or not ch.is_active or ch.pause_requested:
+            await obj.answer("Невозможно отправить запрос.")
+            return
+        if ch.pause_until and ch.pause_until > _dt.now():
+            await obj.answer("Челлендж уже на паузе.")
+            return
+        ch.pause_requested = True
+        ch.pause_reason = reason
+        title = ch.title
+        await session.commit()
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        from models import User as _User
+        u = await session.execute(_sel(_User).where(_User.tg_id == user_id))
+        user = u.scalar_one_or_none()
+    author_nick = f"@{user.username}" if user and user.username else (user.school_nick if user else str(user_id))
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏸ Одобрить паузу", callback_data=f"ch_pause_ok:{challenge_id}")
+    kb.button(text="❌ Отказать",       callback_data=f"ch_pause_no:{challenge_id}")
+    kb.adjust(2)
+
+    reason_str = f"\nПричина: {reason}" if reason else ""
+    text = (
+        f"⏸ <b>Запрос на паузу челленджа</b>\n\n"
+        f"<b>{title}</b>\n"
+        f"Автор: {author_nick}"
+        f"{reason_str}\n\n"
+        f"Одобрить паузу?"
+    )
+    await _notify_admins_challenge(bot, text, kb.as_markup())
+    await obj.answer(f"✅ Запрос на паузу «{title}» отправлен администратору.")
+
+
+# ─── Запрос разморозки через бота ────────────────────────────
+
+@router.callback_query(F.data.startswith("bot_req_unfreeze:"))
+async def cb_bot_req_unfreeze(call: CallbackQuery) -> None:
+    parts = call.data.split(":")
+    challenge_id = int(parts[1])
+
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch or ch.user_id != call.from_user.id:
+            await call.answer("Ошибка.", show_alert=True)
+            return
+        title = ch.title
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        from models import User as _User
+        u = await session.execute(_sel(_User).where(_User.tg_id == call.from_user.id))
+        user = u.scalar_one_or_none()
+    author_nick = f"@{user.username}" if user and user.username else (user.school_nick if user else str(call.from_user.id))
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="▶️ Разморозить", callback_data=f"ch_unfreeze_ok:{challenge_id}")
+    kb.button(text="❌ Отказать",    callback_data=f"ch_unfreeze_no:{challenge_id}")
+    kb.adjust(2)
+
+    text = (
+        f"▶️ <b>Запрос на разморозку челленджа</b>\n\n"
+        f"<b>{title}</b>\n"
+        f"Автор: {author_nick}\n\n"
+        f"Разморозить челлендж?"
+    )
+    await _notify_admins_challenge(call.bot, text, kb.as_markup())
+    await call.answer(f"✅ Запрос на разморозку «{title}» отправлен администратору.")
+
+
+# ─── Одобрение / отказ паузы (admin callback) ────────────────
+
+@router.callback_query(F.data.startswith("ch_pause_ok:"))
+async def cb_pause_ok(callback: CallbackQuery) -> None:
+    """Администратор одобрил паузу челленджа."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+        if not ch.is_active:
+            await callback.answer("Уже завершён.", show_alert=True)
+            return
+
+        from datetime import datetime as _dt
+        ch.pause_until = _dt(9999, 12, 31)   # бессрочная пауза до разморозки
+        ch.frozen_at = _dt.now()
+        ch.pause_requested = False
+        owner_id = ch.user_id
+        title = ch.title
+        await session.commit()
+
+    # Уведомление автора
+    try:
+        await callback.bot.send_message(
+            owner_id,
+            f"⏸ Администратор поставил на паузу твой челлендж <b>«{title}»</b>.\n"
+            f"Пробежки не будут засчитываться до разморозки. "
+            f"Запроси разморозку в Mini App когда будешь готов.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    # Публикуем в болталку
+    from services.scheduler import _post_to_digest
+    await _post_to_digest(
+        callback.bot,
+        f"❄️ Челлендж <b>«{title}»</b> поставлен на паузу по согласованию с администратором.",
+    )
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n⏸ <b>Пауза одобрена.</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer("Пауза установлена.")
+
+
+@router.callback_query(F.data.startswith("ch_pause_no:"))
+async def cb_pause_no(callback: CallbackQuery) -> None:
+    """Администратор отказал в паузе."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+        ch.pause_requested = False
+        owner_id = ch.user_id
+        title = ch.title
+        await session.commit()
+
+    try:
+        await callback.bot.send_message(
+            owner_id,
+            f"❌ Запрос на паузу челленджа <b>«{title}»</b> отклонён.\nПродолжай бежать! 🏃",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ <b>В паузе отказано.</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer("Запрос отклонён.")
+
+
+# ─── Разморозка по запросу / вручную (admin callback) ────────
+
+@router.callback_query(F.data.startswith("ch_unfreeze_ok:"))
+async def cb_unfreeze_ok(callback: CallbackQuery) -> None:
+    """Администратор разморозил челлендж."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+
+        from datetime import datetime as _dt2
+        if ch.frozen_at and ch.deadline:
+            ch.deadline = ch.deadline + (_dt2.now() - ch.frozen_at)
+        ch.pause_until = None
+        ch.frozen_at = None
+        owner_id = ch.user_id
+        title = ch.title
+        await session.commit()
+
+    try:
+        await callback.bot.send_message(
+            owner_id,
+            f"▶️ Твой челлендж <b>«{title}»</b> разморожен! Пробежки снова засчитываются. 🏃",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    # Публикуем в болталку
+    from services.scheduler import _post_to_digest
+    await _post_to_digest(
+        callback.bot,
+        f"▶️ Челлендж <b>«{title}»</b> возобновлён по согласованию с администратором.",
+    )
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n▶️ <b>Разморожен.</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer("Челлендж разморожен.")
+
+
+@router.callback_query(F.data.startswith("ch_unfreeze_no:"))
+async def cb_unfreeze_no(callback: CallbackQuery) -> None:
+    """Администратор отказал в разморозке."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+        owner_id = ch.user_id
+        title = ch.title
+
+    try:
+        await callback.bot.send_message(
+            owner_id,
+            f"❌ Запрос на разморозку челленджа <b>«{title}»</b> отклонён.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ <b>В разморозке отказано.</b>",
+        parse_mode="HTML",
+    )
     await callback.answer("Запрос отклонён.")

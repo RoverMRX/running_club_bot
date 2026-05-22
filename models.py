@@ -85,6 +85,10 @@ class Challenge(Base):
     deadline      = Column(DateTime, nullable=True)
     pause_until       = Column(DateTime, nullable=True)
     close_requested   = Column(Boolean, default=False)  # автор просит закрыть, ждёт апрува
+    pause_requested   = Column(Boolean, default=False)  # автор просит паузу, ждёт апрува
+    pause_reason      = Column(String,  nullable=True)   # причина паузы от автора
+    result            = Column(String,  nullable=True)   # completed / failed / closed
+    frozen_at         = Column(DateTime, nullable=True)  # момент заморозки для сдвига дедлайна
 
     created_at    = Column(DateTime, default=datetime.now)
 

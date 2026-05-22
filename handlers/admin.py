@@ -423,6 +423,82 @@ async def cmd_post_app(message: Message) -> None:
     await message.answer("✅ Опубликовано в группе.")
 
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# Запросы по челленджам (завершение / пауза / разморозка)
+# ═══════════════════════════════════════════════════════════════
+
+@router.message(F.text == "🎯 Запросы по челленджам")
+async def cmd_challenge_requests(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    from models import Challenge, User
+    from sqlalchemy import select, or_
+
+    async with async_session() as session:
+        res = await session.execute(
+            select(Challenge, User)
+            .join(User, User.tg_id == Challenge.user_id)
+            .where(
+                Challenge.is_active == True,
+                or_(
+                    Challenge.close_requested == True,
+                    Challenge.pause_requested == True,
+                )
+            )
+            .order_by(Challenge.created_at.desc())
+        )
+        rows = list(res.all())
+
+    if not rows:
+        await message.answer(
+            "✅ Нет активных запросов по челленджам.",
+            reply_markup=get_admin_main_kb(),
+        )
+        return
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    await message.answer(
+        f"🎯 <b>Запросы по челленджам</b> ({len(rows)} шт.)\n\nВыбери запрос:",
+        reply_markup=get_admin_main_kb(),
+    )
+
+    for ch, user in rows:
+        author = f"@{user.username}" if user.username else user.school_nick
+        if ch.ch_type == "weekly_runs":
+            progress = f"{ch.current_runs} пробежек"
+        else:
+            progress = f"{ch.current_value:.1f} / {ch.goal_value:.1f} км"
+
+        req_type = []
+        if ch.close_requested:
+            req_type.append("🏁 завершение")
+        if ch.pause_requested:
+            reason_str = f" (причина: {ch.pause_reason})" if ch.pause_reason else ""
+            req_type.append(f"⏸ пауза{reason_str}")
+
+        text = (
+            f"<b>{ch.title}</b>\n"
+            f"Автор: {author}\n"
+            f"Прогресс: {progress}\n"
+            f"Запросы: {', '.join(req_type)}"
+        )
+
+        builder = InlineKeyboardBuilder()
+        if ch.close_requested:
+            builder.button(text="✅ Разрешить завершение", callback_data=f"ch_close_ok:{ch.id}")
+            builder.button(text="❌ Отказать в завершении", callback_data=f"ch_close_no:{ch.id}")
+        if ch.pause_requested:
+            builder.button(text="⏸ Одобрить паузу",  callback_data=f"ch_pause_ok:{ch.id}")
+            builder.button(text="❌ Отказать в паузе", callback_data=f"ch_pause_no:{ch.id}")
+        if ch.pause_until and ch.pause_until > __import__("datetime").datetime.now():
+            builder.button(text="▶️ Разморозить сейчас", callback_data=f"ch_unfreeze_ok:{ch.id}")
+        builder.adjust(2)
+
+        await message.answer(text, reply_markup=builder.as_markup())
 @router.message(Command("set_menu_button"))
 async def cmd_set_menu_button(message: Message) -> None:
     """Установить / обновить кнопку меню бота (синяя кнопка в личном чате)."""

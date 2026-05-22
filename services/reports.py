@@ -218,10 +218,9 @@ async def add_vote(
             approved = pos_votes >= config.VOTES_REQUIRED
             rejected = neg_votes >= config.VOTES_REQUIRED
 
-            if approved:
-                report.is_approved = True
-                await session.flush()
-            elif rejected:
+            # Не выставляем is_approved здесь — это делает approve_report
+            # чтобы XP начислялся корректно
+            if rejected:
                 report.is_rejected = True
                 report.rejected_by = voter_id
                 await session.flush()

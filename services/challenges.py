@@ -295,6 +295,7 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
                 # Проверка завершения для целевых типов
                 if _is_goal_reached(ch):
                     ch.is_active = False
+                    ch.result = "completed"
                     completed.append(ch.title)
 
             # Присоединённые челленджи
@@ -339,10 +340,29 @@ async def pause_challenge(challenge_id: int, until: datetime) -> bool:
             if not ch:
                 return False
             ch.pause_until = until
+            ch.frozen_at = datetime.now()
             return True
 
 
-async def close_challenge(challenge_id: int) -> bool:
+async def unfreeze_challenge(challenge_id: int) -> bool:
+    """Снять паузу, сдвинуть дедлайн на время заморозки."""
+    async with async_session() as session:
+        async with session.begin():
+            res = await session.execute(
+                select(Challenge).where(Challenge.id == challenge_id)
+            )
+            ch = res.scalar_one_or_none()
+            if not ch:
+                return False
+            if ch.frozen_at and ch.deadline:
+                frozen_duration = datetime.now() - ch.frozen_at
+                ch.deadline += frozen_duration
+            ch.pause_until = None
+            ch.frozen_at = None
+            return True
+
+
+async def close_challenge(challenge_id: int, result: str = "closed") -> bool:
     """Завершить челлендж вручную (досрочно)."""
     async with async_session() as session:
         async with session.begin():
@@ -353,6 +373,7 @@ async def close_challenge(challenge_id: int) -> bool:
             if not ch:
                 return False
             ch.is_active = False
+            ch.result = result
             return True
 
 

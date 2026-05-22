@@ -92,11 +92,11 @@ async def get_profile(tg_id: int) -> dict:
         own_challenges = own_res.scalars().all()
 
         joined_res = await session.execute(
-            select(ChallengeParticipant).where(
-                ChallengeParticipant.user_id == tg_id
-            )
+            select(Challenge)
+            .join(ChallengeParticipant, ChallengeParticipant.challenge_id == Challenge.id)
+            .where(ChallengeParticipant.user_id == tg_id)
         )
-        joined_challenges = [p.challenge for p in joined_res.scalars().all()]
+        joined_challenges = joined_res.scalars().all()
 
         reports_res = await session.execute(
             select(Report)

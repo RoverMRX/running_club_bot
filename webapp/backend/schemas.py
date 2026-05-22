@@ -60,6 +60,10 @@ class ChallengeOut(BaseModel):
     days_left:           int | None = None
     is_paused:           bool = False        # заморожен прямо сейчас
     close_requested:     bool = False        # автор попросил закрыть
+    pause_requested:     bool = False        # автор попросил паузу
+    result:              str | None = None   # completed / failed / closed
+    my_current_value:    float = 0.0         # прогресс текущего юзера (участника)
+    my_current_runs:     int   = 0
     participants:        list[ChallengeParticipantOut] = []
 
     class Config:
