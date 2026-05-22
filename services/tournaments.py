@@ -319,7 +319,8 @@ async def finalize_tournament(tournament_id: int) -> dict:
             if user and xp_bonus:
                 user.xp += xp_bonus
                 user.season_xp += xp_bonus
-                user.level = user.xp // 100
+                from services.xp import calc_level
+                user.level = calc_level(user.xp)
 
             placements.append({
                 "position":   pos,

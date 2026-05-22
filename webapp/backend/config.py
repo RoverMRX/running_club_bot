@@ -15,6 +15,19 @@ ADMIN_IDS: list[int] = [
     if i.strip()
 ]
 
+# Вторичная группа для репоста анонсов
+_sg = os.getenv("SECONDARY_GROUP_ID", "")
+SECONDARY_GROUP_ID: int | None = int(_sg) if _sg.strip() else None
+SECONDARY_THREAD_ID: int | None = int(os.getenv("SECONDARY_THREAD_ID", "0")) or None
+
+# Ссылка-приглашение в клуб (для репоста в вторичную группу)
+CLUB_INVITE_LINK: str = os.getenv("CLUB_INVITE_LINK", "https://t.me/+HLikNXKlA3YwNDRi")
+
+# Основная группа и топик событий
+_g = os.getenv("GROUP_ID", "")
+GROUP_ID: int | None = int(_g) if _g.strip() else None
+EVENTS_THREAD_ID: int | None = int(os.getenv("EVENTS_THREAD_ID", "0")) or None
+
 # Если DB_URL относительный — резолвим от корня проекта
 if DB_URL.startswith("sqlite+aiosqlite:///./"):
     _db_file = DB_URL.replace("sqlite+aiosqlite:///./", "")

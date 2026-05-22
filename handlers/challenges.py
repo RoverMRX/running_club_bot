@@ -32,6 +32,9 @@ from keyboards import (
     get_challenges_menu_kb,
 )
 from services.challenges import create_challenge, get_type_name, get_public_challenges, join_challenge
+from database import async_session
+from models import Challenge
+from sqlalchemy import select
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -785,3 +788,66 @@ async def _do_join(call: CallbackQuery, challenge_id: int, page: int, penalty) -
 
     await call.message.edit_text(text, reply_markup=builder.as_markup())
     await call.answer(f"✅ {result['reason']}")
+
+# ─── Подтверждение/отказ закрытия (admin callback из Mini App) ───
+
+@router.callback_query(F.data.startswith("ch_close_ok:"))
+async def cb_close_ok(callback: CallbackQuery) -> None:
+    """Администратор разрешил закрыть челлендж."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+        if not ch.is_active:
+            await callback.answer("Уже завершён.", show_alert=True)
+            return
+        ch.is_active = False
+        ch.close_requested = False
+        owner_id = ch.user_id
+        title = ch.title
+        await session.commit()
+
+    try:
+        msg = "✅ Администратор разрешил завершить челлендж <b>\u00ab" + title + "\u00bb</b>.\nЧелленд закрыт."
+        await callback.bot.send_message(owner_id, msg, parse_mode="HTML")
+    except Exception:
+        pass
+
+    await callback.message.edit_text(callback.message.text + "\n\n✅ <b>Завершение разрешено.</b>")
+    await callback.answer("Челлендж закрыт.")
+
+
+@router.callback_query(F.data.startswith("ch_close_no:"))
+async def cb_close_no(callback: CallbackQuery) -> None:
+    """Администратор отказал в закрытии."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    challenge_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await callback.answer("Челлендж не найден.", show_alert=True)
+            return
+        ch.close_requested = False
+        owner_id = ch.user_id
+        title = ch.title
+        await session.commit()
+
+    try:
+        msg = "❌ Запрос на завершение челленджа <b>\u00ab" + title + "\u00bb</b> отклонён.\nПродолжай бежать! 🏃"
+        await callback.bot.send_message(owner_id, msg, parse_mode="HTML")
+    except Exception:
+        pass
+
+    await callback.message.edit_text(callback.message.text + "\n\n❌ <b>В завершении отказано.</b>")
+    await callback.answer("Запрос отклонён.")

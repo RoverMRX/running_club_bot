@@ -72,7 +72,7 @@ async def cmd_back(message: Message, state: FSMContext) -> None:
 # Шаблоны мероприятий
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(F.text == "📋 Шаблоны мероприятий")
+@router.message(F.text == "📐 Шаблоны мероприятий")
 async def cmd_templates_menu(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         await message.answer("Шаблоны доступны только администраторам.")
@@ -238,7 +238,7 @@ async def fsm_tpl_cancel(message: Message, state: FSMContext) -> None:
 # Управление модераторами
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(F.text == "👥 Управление модераторами")
+@router.message(F.text == "👥 Модераторы")
 async def cmd_manage_mods(message: Message) -> None:
     if not _is_admin(message.from_user.id):
         await message.answer("Только для администраторов.")

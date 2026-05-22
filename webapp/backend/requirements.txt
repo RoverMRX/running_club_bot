@@ -4,3 +4,5 @@ python-dotenv==1.0.1
 sqlalchemy==2.0.36
 aiosqlite
 python-multipart
+aiogram==3.10.0
+aiohttp-socks

@@ -5,6 +5,7 @@ import {
   getClubChallenges, getClubChallengesCount,
   getChallenge, createChallenge,
   joinChallenge, leaveChallenge, closeChallenge,
+  requestCloseChallenge,
 } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
@@ -117,7 +118,8 @@ function ChallengeDetail({ id, onBack }) {
 
   const joinMut  = useMutation({ mutationFn: () => joinChallenge(id, penalty || null), onSuccess: inv });
   const leaveMut = useMutation({ mutationFn: () => leaveChallenge(id), onSuccess: () => { inv(); onBack(); } });
-  const closeMut = useMutation({ mutationFn: () => closeChallenge(id), onSuccess: () => { inv(); onBack(); } });
+  const closeMut        = useMutation({ mutationFn: () => closeChallenge(id), onSuccess: () => { inv(); onBack(); } });
+  const requestCloseMut = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -153,6 +155,11 @@ function ChallengeDetail({ id, onBack }) {
               : `До ${fmtDate(ch.deadline)}`}
           </div>
         )}
+        {ch.is_paused && (
+          <div style={{ marginTop: 4, fontSize: 12, color: "#4a9eff", fontWeight: 500 }}>
+            ❄️ Заморожен до разморозки администратором
+          </div>
+        )}
 
         <div className="divider" />
 
@@ -168,22 +175,16 @@ function ChallengeDetail({ id, onBack }) {
         {/* Кнопки действий */}
         {ch.is_active && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {ch.is_owner && !showCloseConfirm && (
-              <button className="btn btn-secondary" style={{ fontSize: 13 }}
-                onClick={() => setShowCloseConfirm(true)}>
-                🏁 Завершить
+            {ch.is_owner && !ch.close_requested && (
+              <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
+                onClick={() => requestCloseMut.mutate()}>
+                {requestCloseMut.isPending ? "..." : "🏁 Запросить завершение"}
               </button>
             )}
-            {ch.is_owner && showCloseConfirm && (
-              <>
-                <button className="btn btn-danger" disabled={closeMut.isPending}
-                  onClick={() => closeMut.mutate()}>
-                  {closeMut.isPending ? "..." : "Подтвердить завершение"}
-                </button>
-                <button className="btn btn-secondary" onClick={() => setShowCloseConfirm(false)}>
-                  Отмена
-                </button>
-              </>
+            {ch.is_owner && ch.close_requested && (
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                ⏳ Запрос на завершение отправлен администратору
+              </div>
             )}
             {ch.is_participant && (
               <button className="btn btn-secondary" disabled={leaveMut.isPending}

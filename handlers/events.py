@@ -119,7 +119,7 @@ def _templates_inline_kb(templates: list) -> object:
 
 # ── «📅 Мероприятия» — список ────────────────────────────────
 
-@router.message(F.text == "📅 Мероприятия")
+@router.message(F.text == "📋 Ближайшие мероприятия")
 async def cmd_events_list(message: Message) -> None:
     async with async_session() as session:
         events = await get_upcoming_events(session)
@@ -186,7 +186,7 @@ async def cb_event_members(callback: CallbackQuery) -> None:
 
 # ── Создание мероприятия ──────────────────────────────────────
 
-@router.message(F.text == "📅 Создать мероприятие")
+@router.message(F.text == "➕ Создать мероприятие")
 async def cmd_create_event_start(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
         templates = await get_templates(session)
@@ -435,7 +435,7 @@ async def _notify_mods_about_pending(bot: Bot, event) -> None:
 
 # ── Мероприятия на модерации ──────────────────────────────────
 
-@router.message(F.text == "🕐 Мероприятия на модерации")
+@router.message(F.text == "🗂 На модерации")
 async def cmd_pending_events(message: Message) -> None:
     if not await _is_admin_or_mod(message.from_user.id):
         await message.answer("Недостаточно прав.")

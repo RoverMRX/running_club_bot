@@ -83,7 +83,8 @@ class Challenge(Base):
 
     started_at    = Column(DateTime, nullable=True)
     deadline      = Column(DateTime, nullable=True)
-    pause_until   = Column(DateTime, nullable=True)
+    pause_until       = Column(DateTime, nullable=True)
+    close_requested   = Column(Boolean, default=False)  # автор просит закрыть, ждёт апрува
 
     created_at    = Column(DateTime, default=datetime.now)
 
@@ -356,3 +357,21 @@ class Tournament(Base):
     start_date = Column(DateTime, nullable=False)
     end_date   = Column(DateTime, nullable=False)
     is_active  = Column(Boolean,  default=True)
+
+# ────────────────────────────────────────────
+# Очередь уведомлений от webapp к боту
+# ────────────────────────────────────────────
+
+class PendingNotification(Base):
+    """
+    Api-контейнер пишет сюда задачи, бот забирает и отправляет.
+    Это позволяет не держать прокси в api-контейнере.
+    """
+    __tablename__ = "pending_notifications"
+
+    id         = Column(Integer,  primary_key=True)
+    user_tg_id = Column(BigInteger, nullable=False)   # кому отправить
+    text       = Column(String,   nullable=False)      # текст сообщения
+    kb_json    = Column(String,   nullable=True)       # JSON inline-кнопок (опционально)
+    created_at = Column(DateTime, default=datetime.now)
+    sent       = Column(Boolean,  default=False)       # флаг: уже отправлено

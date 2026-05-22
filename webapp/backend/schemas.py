@@ -58,6 +58,8 @@ class ChallengeOut(BaseModel):
     is_owner:            bool = False
     is_participant:      bool = False
     days_left:           int | None = None
+    is_paused:           bool = False        # заморожен прямо сейчас
+    close_requested:     bool = False        # автор попросил закрыть
     participants:        list[ChallengeParticipantOut] = []
 
     class Config:

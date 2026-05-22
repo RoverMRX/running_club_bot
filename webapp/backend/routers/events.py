@@ -3,14 +3,15 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 
 from database import get_db
 from auth import get_current_user
 from schemas import (
     EventOut, EventParticipantOut, EventTemplateOut,
-    CreateEventRequest, RejectEventRequest, OkResponse,
+    CreateEventRequest, OkResponse,
 )
+from notify import queue_message, queue_message_to_admins
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -21,24 +22,17 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 # ─── helpers ─────────────────────────────────────────────────
 
-async def _is_admin_or_mod(db: AsyncSession, user_id: int) -> bool:
-    from config import ADMIN_IDS
-    if user_id in ADMIN_IDS:
-        return True
-    mod = await db.execute(select(Moderator).where(Moderator.tg_id == user_id))
-    return mod.scalar_one_or_none() is not None
-
-
-async def _notify_user(user_id: int, text: str) -> None:
-    """Отправить личное сообщение пользователю через бота."""
-    try:
-        from config import BOT_TOKEN
-        from aiogram import Bot
-        bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(user_id, text, parse_mode="HTML")
-        await bot.session.close()
-    except Exception:
-        pass  # уведомление не критично — не блокируем ответ
+def _format_announce(ev: Event) -> str:
+    date_str = ev.event_date.strftime("%d.%m.%Y в %H:%M") if ev.event_date else "—"
+    lines = [f"📅 <b>{ev.title}</b>", "", f"🗓 <b>Дата:</b> {date_str}"]
+    if ev.location:
+        lines.append(f"📍 <b>Место:</b> {ev.location}")
+    if ev.distance_km:
+        lines.append(f"🏃 <b>Дистанция:</b> {ev.distance_km} км")
+    if ev.description:
+        lines += ["", ev.description]
+    lines += ["", f"⭐ <b>XP за участие:</b> +{ev.xp_bonus} (×{ev.xp_multiplier} за км)"]
+    return "\n".join(lines)
 
 
 async def _enrich_event(
@@ -68,10 +62,8 @@ async def _enrich_event(
                 EventParticipant.user_tg_id == user_id,
             )
         )
-        row = us_res.scalar_one_or_none()
-        user_status = row if row else None
+        user_status = us_res.scalar_one_or_none()
 
-    # Ник создателя
     created_by_nick = None
     if ev.created_by:
         nick_res = await db.execute(
@@ -79,7 +71,6 @@ async def _enrich_event(
         )
         created_by_nick = nick_res.scalar_one_or_none()
 
-    # Участники (опционально, для детальной карточки)
     participants: list[EventParticipantOut] = []
     if with_participants:
         p_res = await db.execute(
@@ -123,25 +114,19 @@ async def get_templates(
     tg_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[EventTemplateOut]:
-    """Список активных шаблонов мероприятий."""
     res = await db.execute(
         select(EventTemplate)
         .where(EventTemplate.is_active == True)
         .order_by(EventTemplate.name.asc())
     )
-    templates = res.scalars().all()
     return [
         EventTemplateOut(
-            id=t.id,
-            name=t.name,
-            description=t.description,
-            location=t.location,
-            distance_km=t.distance_km,
-            xp_bonus=t.xp_bonus or 100,
-            xp_multiplier=t.xp_multiplier or 1.5,
+            id=t.id, name=t.name, description=t.description,
+            location=t.location, distance_km=t.distance_km,
+            xp_bonus=t.xp_bonus or 100, xp_multiplier=t.xp_multiplier or 1.5,
             is_external=t.is_external or False,
         )
-        for t in templates
+        for t in res.scalars().all()
     ]
 
 
@@ -153,36 +138,22 @@ async def get_events(
     db: AsyncSession = Depends(get_db),
     upcoming_only: bool = True,
 ) -> list[EventOut]:
-    """Ближайшие (или все прошедшие) мероприятия."""
-    q = select(Event).where(
-        Event.is_active == True,
-        Event.is_pending == False,
-    )
-    if upcoming_only:
-        q = q.where(Event.event_date >= datetime.now()).order_by(Event.event_date.asc())
-    else:
-        # архив — прошедшие, сначала самые новые
-        q = q.where(Event.event_date < datetime.now()).order_by(Event.event_date.desc())
-    res = await db.execute(q)
-    events = res.scalars().all()
-    return [await _enrich_event(ev, db, tg_user["id"]) for ev in events]
-
-
-@router.get("/pending", response_model=list[EventOut])
-async def get_pending_events(
-    tg_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> list[EventOut]:
-    """Мероприятия на модерации (только для админа/модератора)."""
     user_id = tg_user["id"]
-    if not await _is_admin_or_mod(db, user_id):
-        raise HTTPException(status_code=403, detail="Нет прав")
+    q = select(Event).where(Event.is_active == True)
 
-    res = await db.execute(
-        select(Event).where(Event.is_pending == True).order_by(Event.created_at.desc())
-    )
-    events = res.scalars().all()
-    return [await _enrich_event(ev, db, user_id) for ev in events]
+    if upcoming_only:
+        q = q.where(
+            or_(Event.is_pending == False, Event.created_by == user_id),
+            Event.event_date >= datetime.now(),
+        ).order_by(Event.event_date.asc())
+    else:
+        q = q.where(
+            Event.is_pending == False,
+            Event.event_date < datetime.now(),
+        ).order_by(Event.event_date.desc())
+
+    res = await db.execute(q)
+    return [await _enrich_event(ev, db, user_id) for ev in res.scalars().all()]
 
 
 @router.get("/{event_id}", response_model=EventOut)
@@ -191,7 +162,6 @@ async def get_event(
     tg_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> EventOut:
-    """Детальная карточка мероприятия со списком участников."""
     ev_res = await db.execute(select(Event).where(Event.id == event_id))
     ev = ev_res.scalar_one_or_none()
     if not ev:
@@ -207,7 +177,6 @@ async def create_event(
     tg_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
-    """Создать мероприятие (из шаблона или вручную). Уходит на модерацию."""
     user_id = tg_user["id"]
 
     try:
@@ -218,7 +187,6 @@ async def create_event(
     if event_date < datetime.now():
         return OkResponse(ok=False, reason="Дата не может быть в прошлом")
 
-    # Если передан template_id — тянем данные из шаблона
     title = body.title
     description = body.description
     location = body.location
@@ -232,28 +200,49 @@ async def create_event(
         )
         tpl = tpl_res.scalar_one_or_none()
         if tpl:
-            title = body.title or tpl.name
-            description = body.description if body.description is not None else tpl.description
-            location = body.location if body.location is not None else tpl.location
-            distance_km = body.distance_km if body.distance_km is not None else tpl.distance_km
-            xp_bonus = tpl.xp_bonus or 100
+            title         = body.title or tpl.name
+            description   = body.description if body.description is not None else tpl.description
+            location      = body.location    if body.location    is not None else tpl.location
+            distance_km   = body.distance_km if body.distance_km is not None else tpl.distance_km
+            xp_bonus      = tpl.xp_bonus      or 100
             xp_multiplier = tpl.xp_multiplier or 1.5
 
     ev = Event(
-        title=title,
-        description=description,
-        location=location,
-        event_date=event_date,
-        distance_km=distance_km,
-        created_by=user_id,
-        is_active=True,
-        is_pending=True,
-        xp_bonus=xp_bonus,
-        xp_multiplier=xp_multiplier,
+        title=title, description=description, location=location,
+        event_date=event_date, distance_km=distance_km,
+        created_by=user_id, is_active=True, is_pending=True,
+        xp_bonus=xp_bonus, xp_multiplier=xp_multiplier,
         template_id=body.template_id,
     )
     db.add(ev)
     await db.commit()
+    await db.refresh(ev)
+
+    # Уведомляем модераторов через очередь (бот отправит сам)
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb_builder = InlineKeyboardBuilder()
+        kb_builder.button(
+            text="📢 Опубликовать в основную группу",
+            callback_data=f"evt_pub_main:{ev.id}",
+        )
+        kb_builder.button(text="❌ Отклонить", callback_data=f"evt_reject:{ev.id}")
+        kb_builder.adjust(1)
+
+        nick_res = await db.execute(select(User.school_nick).where(User.tg_id == user_id))
+        author_nick = nick_res.scalar_one_or_none() or f"ID {user_id}"
+
+        msg_text = (
+            f"🆕 <b>Новое мероприятие на модерации</b>\n\n"
+            f"{_format_announce(ev)}\n\n"
+            f"Создал: <b>{author_nick}</b>"
+        )
+        await queue_message_to_admins(db, msg_text, kb_builder.as_markup())
+        await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("events").warning(f"Ошибка постановки уведомления: {e}")
+
     return OkResponse(ok=True, reason="Мероприятие отправлено на модерацию!")
 
 
@@ -266,7 +255,6 @@ async def join_event(
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
     user_id = tg_user["id"]
-
     ev_res = await db.execute(select(Event).where(Event.id == event_id))
     ev = ev_res.scalar_one_or_none()
     if not ev or not ev.is_active or ev.is_pending:
@@ -283,19 +271,16 @@ async def join_event(
         participant.status = "going"
     else:
         db.add(EventParticipant(event_id=event_id, user_tg_id=user_id, status="going"))
-
     await db.commit()
 
-    # Уведомить организатора если это не он сам
     if ev.created_by and ev.created_by != user_id:
-        nick_res = await db.execute(
-            select(User.school_nick).where(User.tg_id == user_id)
-        )
+        nick_res = await db.execute(select(User.school_nick).where(User.tg_id == user_id))
         nick = nick_res.scalar_one_or_none() or "Участник"
-        await _notify_user(
-            ev.created_by,
+        await queue_message(
+            db, ev.created_by,
             f"🏃 <b>{nick}</b> записался на твоё мероприятие «{ev.title}»!",
         )
+        await db.commit()
 
     return OkResponse(ok=True, reason="Ты зарегистрирован!")
 
@@ -307,7 +292,6 @@ async def leave_event(
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
     user_id = tg_user["id"]
-
     part_res = await db.execute(
         select(EventParticipant).where(
             EventParticipant.event_id == event_id,
@@ -319,68 +303,3 @@ async def leave_event(
         participant.status = "not_going"
         await db.commit()
     return OkResponse(ok=True, reason="Ты отменил участие.")
-
-
-# ─── Модерация ───────────────────────────────────────────────
-
-@router.post("/{event_id}/approve", response_model=OkResponse)
-async def approve_event(
-    event_id: int,
-    tg_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> OkResponse:
-    """Опубликовать мероприятие (только модератор/админ). Уведомляет автора."""
-    user_id = tg_user["id"]
-    if not await _is_admin_or_mod(db, user_id):
-        raise HTTPException(status_code=403, detail="Нет прав")
-
-    ev_res = await db.execute(select(Event).where(Event.id == event_id))
-    ev = ev_res.scalar_one_or_none()
-    if not ev:
-        return OkResponse(ok=False, reason="Мероприятие не найдено.")
-
-    ev.is_pending = False
-    await db.commit()
-
-    # Уведомление автору
-    if ev.created_by and ev.created_by != user_id:
-        date_str = ev.event_date.strftime("%d.%m.%Y в %H:%M") if ev.event_date else "—"
-        await _notify_user(
-            ev.created_by,
-            f"✅ Твоё мероприятие <b>«{ev.title}»</b> одобрено и опубликовано!\n"
-            f"📅 {date_str}",
-        )
-
-    return OkResponse(ok=True, reason="Мероприятие опубликовано!")
-
-
-@router.post("/{event_id}/reject", response_model=OkResponse)
-async def reject_event(
-    event_id: int,
-    body: RejectEventRequest = RejectEventRequest(),
-    tg_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> OkResponse:
-    """Отклонить мероприятие (только модератор/админ). Уведомляет автора с причиной."""
-    user_id = tg_user["id"]
-    if not await _is_admin_or_mod(db, user_id):
-        raise HTTPException(status_code=403, detail="Нет прав")
-
-    ev_res = await db.execute(select(Event).where(Event.id == event_id))
-    ev = ev_res.scalar_one_or_none()
-    if not ev:
-        return OkResponse(ok=False, reason="Мероприятие не найдено.")
-
-    ev.is_active = False
-    ev.is_pending = False
-    await db.commit()
-
-    # Уведомление автору с причиной
-    if ev.created_by and ev.created_by != user_id:
-        reason_part = f"\n\n💬 Причина: {body.reason}" if body.reason else ""
-        await _notify_user(
-            ev.created_by,
-            f"❌ Твоё мероприятие <b>«{ev.title}»</b> отклонено.{reason_part}",
-        )
-
-    return OkResponse(ok=True, reason="Мероприятие отклонено.")

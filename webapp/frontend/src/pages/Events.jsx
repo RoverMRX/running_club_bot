@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  getEvents, getArchiveEvents, getPendingEvents, getEvent,
+  getEvents, getArchiveEvents, getEvent,
   getEventTemplates, createEvent,
-  joinEvent, leaveEvent, approveEvent, rejectEvent,
+  joinEvent, leaveEvent,
 } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
@@ -18,23 +18,14 @@ function fmt(dt) {
   });
 }
 
-function fmtDateOnly(dt) {
-  if (!dt) return "";
-  return new Date(dt).toLocaleDateString("ru", {
-    day: "2-digit", month: "long", year: "numeric",
-  });
-}
-
-// Дефолтное значение datetime-local (сегодня + 1 день, 09:00)
 function defaultDatetime() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   d.setHours(9, 0, 0, 0);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T09:00`;
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T09:00`;
 }
 
-// datetime-local → "DD.MM.YYYY HH:MM" для API
 function parseDatetimeInput(val) {
   if (!val) return "";
   const [date, time] = val.split("T");
@@ -43,7 +34,7 @@ function parseDatetimeInput(val) {
 }
 
 
-// ─── Список участников (внутри детальной карточки) ───────────
+// ─── Список участников ───────────────────────────────────────
 
 function ParticipantsList({ participants }) {
   const going    = participants.filter(p => p.status === "going");
@@ -92,12 +83,10 @@ function ParticipantsList({ participants }) {
 }
 
 
-// ─── Детальная карточка мероприятия ──────────────────────────
+// ─── Детальная карточка ──────────────────────────────────────
 
-function EventDetail({ id, isAdmin, onBack }) {
+function EventDetail({ id, onBack }) {
   const qc = useQueryClient();
-  const [rejectReason, setRejectReason] = useState("");
-  const [showRejectForm, setShowRejectForm] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
 
   const { data: ev, isLoading, isError, error } = useQuery({
@@ -109,17 +98,11 @@ function EventDetail({ id, isAdmin, onBack }) {
   const inv = () => {
     qc.invalidateQueries({ queryKey: ["event", id] });
     qc.invalidateQueries({ queryKey: ["events"] });
-    qc.invalidateQueries({ queryKey: ["events-pending"] });
     qc.invalidateQueries({ queryKey: ["events-archive"] });
   };
 
-  const joinMut    = useMutation({ mutationFn: () => joinEvent(id),    onSuccess: inv });
-  const leaveMut   = useMutation({ mutationFn: () => leaveEvent(id),   onSuccess: inv });
-  const approveMut = useMutation({ mutationFn: () => approveEvent(id), onSuccess: inv });
-  const rejectMut  = useMutation({
-    mutationFn: () => rejectEvent(id, rejectReason),
-    onSuccess: () => { inv(); onBack(); },
-  });
+  const joinMut  = useMutation({ mutationFn: () => joinEvent(id),  onSuccess: inv });
+  const leaveMut = useMutation({ mutationFn: () => leaveEvent(id), onSuccess: inv });
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -132,21 +115,21 @@ function EventDetail({ id, isAdmin, onBack }) {
         style={{ width: "auto", padding: "7px 14px", marginBottom: 16, fontSize: 13 }}
         onClick={onBack}>← Назад</button>
 
-      {/* Основная карточка */}
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
           <h2 style={{ margin: 0, flex: 1 }}>{ev.title}</h2>
-          {ev.is_pending && <span className="badge badge-pending">Модерация</span>}
-          {isPast && !ev.is_pending && <span className="badge" style={{ background: "var(--text-dim)" }}>Прошло</span>}
+          {ev.is_pending && (
+            <span className="badge badge-pending">На модерации</span>
+          )}
+          {isPast && !ev.is_pending && (
+            <span className="badge" style={{ background: "var(--text-dim)" }}>Прошло</span>
+          )}
         </div>
 
-        <div className="hint" style={{ fontSize: 13, marginBottom: 4 }}>
-          📅 {fmt(ev.event_date)}
-        </div>
+        <div className="hint" style={{ fontSize: 13, marginBottom: 4 }}>📅 {fmt(ev.event_date)}</div>
         {ev.location    && <div className="hint" style={{ fontSize: 13 }}>📍 {ev.location}</div>}
         {ev.distance_km && <div className="hint" style={{ fontSize: 13 }}>🏃 {ev.distance_km} км</div>}
         {ev.description && <div style={{ marginTop: 8, fontSize: 13 }}>{ev.description}</div>}
-
         {ev.created_by_nick && (
           <div className="hint" style={{ fontSize: 12, marginTop: 6 }}>
             Организатор: {ev.created_by_nick}
@@ -155,83 +138,66 @@ function EventDetail({ id, isAdmin, onBack }) {
 
         <div className="divider" />
 
-        <div style={{ display: "flex", gap: 16, fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 16, fontSize: 13,
+          color: "var(--text-muted)", marginBottom: 12 }}>
           <span>🏃 {ev.going_count} идут</span>
           <span>❌ {ev.not_going_count} не идут</span>
           <span>⭐ +{ev.xp_bonus} XP</span>
         </div>
 
-        {/* Кнопки участия (только для опубликованных, не прошедших) */}
+        {/* Кнопки участия — только для опубликованных и не прошедших */}
         {!ev.is_pending && !isPast && (
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {ev.user_status === "going" ? (
               <button className="btn btn-secondary" disabled={leaveMut.isPending}
                 onClick={() => leaveMut.mutate()}>
                 ✅ Участвую · Отменить
               </button>
+            ) : ev.user_status === "not_going" ? (
+              <>
+                <button className="btn btn-primary" disabled={joinMut.isPending}
+                  onClick={() => joinMut.mutate()}>
+                  {joinMut.isPending ? "..." : "🏃 Участвую"}
+                </button>
+                <span style={{ fontSize: 13, color: "var(--text-dim)", alignSelf: "center" }}>
+                  · сейчас ты отказался
+                </span>
+              </>
             ) : (
               <>
                 <button className="btn btn-primary" disabled={joinMut.isPending}
                   onClick={() => joinMut.mutate()}>
                   {joinMut.isPending ? "..." : "🏃 Участвую"}
                 </button>
-                {ev.user_status === "not_going" && (
-                  <span style={{ fontSize: 13, color: "var(--text-dim)", alignSelf: "center" }}>
-                    Ты отказался
-                  </span>
-                )}
+                <button className="btn btn-secondary" disabled={leaveMut.isPending}
+                  onClick={() => leaveMut.mutate()}>
+                  {leaveMut.isPending ? "..." : "❌ Не пойду"}
+                </button>
               </>
             )}
           </div>
         )}
 
-        {/* Кнопки модерации */}
-        {ev.is_pending && isAdmin && (
-          <div style={{ marginTop: 8 }}>
-            {!showRejectForm ? (
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-success" disabled={approveMut.isPending}
-                  onClick={() => approveMut.mutate()}>
-                  {approveMut.isPending ? "..." : "✅ Опубликовать"}
-                </button>
-                <button className="btn btn-danger"
-                  onClick={() => setShowRejectForm(true)}>
-                  ❌ Отклонить
-                </button>
-              </div>
-            ) : (
-              <div>
-                <div className="form-group">
-                  <label>Причина отклонения (необязательно)</label>
-                  <input value={rejectReason} onChange={e => setRejectReason(e.target.value)}
-                    placeholder="Причина будет отправлена организатору" />
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-danger" disabled={rejectMut.isPending}
-                    onClick={() => rejectMut.mutate()}>
-                    {rejectMut.isPending ? "..." : "Подтвердить отклонение"}
-                  </button>
-                  <button className="btn btn-secondary"
-                    onClick={() => { setShowRejectForm(false); setRejectReason(""); }}>
-                    Отмена
-                  </button>
-                </div>
-              </div>
-            )}
+        {/* Мероприятие на модерации — информационный блок */}
+        {ev.is_pending && (
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>
+            ⏳ Ожидает публикации модератором
           </div>
         )}
       </div>
 
       {/* Участники */}
       <div className="card" style={{ marginTop: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-          cursor: "pointer" }} onClick={() => setShowParticipants(v => !v)}>
+        <div style={{ display: "flex", justifyContent: "space-between",
+          alignItems: "center", cursor: "pointer" }}
+          onClick={() => setShowParticipants(v => !v)}>
           <span style={{ fontWeight: 500, fontSize: 14 }}>
             👥 Участники ({ev.going_count})
           </span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round"
-            style={{ transform: showParticipants ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>
+            style={{ transform: showParticipants ? "rotate(90deg)" : "none",
+              transition: "transform 0.2s" }}>
             <path d="M9 18l6-6-6-6"/>
           </svg>
         </div>
@@ -246,28 +212,32 @@ function EventDetail({ id, isAdmin, onBack }) {
 }
 
 
-// ─── Карточка в списке ────────────────────────────────────────
+// ─── Карточка в списке ───────────────────────────────────────
 
-function EventCard({ ev, isAdmin, onClick }) {
+function EventCard({ ev, onClick }) {
   const isPast = ev.event_date && new Date(ev.event_date) < new Date();
 
   return (
     <div className="card" style={{ cursor: "pointer", opacity: isPast ? 0.75 : 1 }}
       onClick={() => onClick(ev.id)}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        gap: 8, marginBottom: 4 }}>
         <h3 style={{ margin: 0, flex: 1, fontSize: 15 }}>{ev.title}</h3>
-        {ev.is_pending && <span className="badge badge-pending">Модерация</span>}
+        {ev.is_pending && <span className="badge badge-pending" style={{ fontSize: 11 }}>На модерации</span>}
         {isPast && !ev.is_pending && (
           <span className="badge" style={{ background: "var(--text-dim)", fontSize: 11 }}>Прошло</span>
         )}
       </div>
       <div className="hint" style={{ fontSize: 13 }}>{fmt(ev.event_date)}</div>
       {ev.location && <div className="hint" style={{ fontSize: 12 }}>📍 {ev.location}</div>}
-      <div style={{ display: "flex", gap: 12, fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 12, fontSize: 12,
+        color: "var(--text-dim)", marginTop: 6 }}>
         <span>🏃 {ev.going_count}</span>
         {ev.distance_km && <span>{ev.distance_km} км</span>}
         <span>+{ev.xp_bonus} XP</span>
-        {ev.user_status === "going" && <span style={{ color: "var(--accent)" }}>✓ Участвую</span>}
+        {ev.user_status === "going" && (
+          <span style={{ color: "var(--accent)" }}>✓ Участвую</span>
+        )}
       </div>
     </div>
   );
@@ -278,7 +248,7 @@ function EventCard({ ev, isAdmin, onClick }) {
 
 function CreateForm({ onSuccess }) {
   const qc = useQueryClient();
-  const [useTemplate, setUseTemplate] = useState(null); // null=не выбрано, false=вручную, id=шаблон
+  const [useTemplate, setUseTemplate] = useState(null);
   const [form, setForm] = useState({
     title: "", description: "", location: "",
     event_date: defaultDatetime(), distance_km: "",
@@ -298,7 +268,6 @@ function CreateForm({ onSuccess }) {
     onSuccess: d => {
       if (d.ok) {
         qc.invalidateQueries({ queryKey: ["events"] });
-        qc.invalidateQueries({ queryKey: ["events-pending"] });
         onSuccess();
       } else {
         setErr(d.reason);
@@ -306,16 +275,15 @@ function CreateForm({ onSuccess }) {
     },
   });
 
-  // Применяем шаблон
-  const applyTemplate = (tpl) => {
+  const applyTemplate = tpl => {
     setUseTemplate(tpl.id);
     setForm(f => ({
       ...f,
-      title: tpl.name,
-      description: tpl.description || "",
-      location: tpl.location || "",
-      distance_km: tpl.distance_km ? String(tpl.distance_km) : "",
-      xp_bonus: String(tpl.xp_bonus),
+      title:         tpl.name,
+      description:   tpl.description || "",
+      location:      tpl.location    || "",
+      distance_km:   tpl.distance_km ? String(tpl.distance_km) : "",
+      xp_bonus:      String(tpl.xp_bonus),
       xp_multiplier: String(tpl.xp_multiplier),
     }));
   };
@@ -366,11 +334,12 @@ function CreateForm({ onSuccess }) {
                     {tpl.is_external ? "🌍" : "🏃"} {tpl.name}
                   </div>
                   <div className="hint" style={{ fontSize: 12, marginTop: 2 }}>
-                    {[tpl.location, tpl.distance_km && `${tpl.distance_km} км`].filter(Boolean).join(" · ")}
+                    {[tpl.location, tpl.distance_km && `${tpl.distance_km} км`]
+                      .filter(Boolean).join(" · ")}
                   </div>
                 </div>
               ))}
-              <div style={{ marginTop: 4, marginBottom: 8, textAlign: "center",
+              <div style={{ margin: "4px 0 8px", textAlign: "center",
                 fontSize: 13, color: "var(--text-dim)" }}>или</div>
             </>
           )}
@@ -385,7 +354,8 @@ function CreateForm({ onSuccess }) {
         <div className="card">
           {typeof useTemplate === "number" && (
             <div style={{ fontSize: 12, color: "var(--accent)", marginBottom: 12 }}>
-              📋 Шаблон применён · <span style={{ cursor: "pointer", textDecoration: "underline" }}
+              📋 Шаблон применён ·{" "}
+              <span style={{ cursor: "pointer", textDecoration: "underline" }}
                 onClick={() => setUseTemplate(null)}>изменить</span>
             </div>
           )}
@@ -404,8 +374,8 @@ function CreateForm({ onSuccess }) {
           </div>
           <div className="form-group">
             <label>Дистанция (км)</label>
-            <input value={form.distance_km} onChange={set("distance_km")} type="number"
-              step="0.1" placeholder="10" />
+            <input value={form.distance_km} onChange={set("distance_km")}
+              type="number" step="0.1" placeholder="10" />
           </div>
           <div className="form-group">
             <label>Описание</label>
@@ -416,7 +386,7 @@ function CreateForm({ onSuccess }) {
           {err && <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
           <div className="hint" style={{ fontSize: 12, marginBottom: 12 }}>
-            Мероприятие уйдёт на модерацию администратору
+            После отправки модератор получит уведомление в боте и опубликует анонс в группу
           </div>
           <button className="btn btn-primary" disabled={mut.isPending} onClick={handleSubmit}>
             {mut.isPending ? "Отправка..." : "Отправить на модерацию"}
@@ -428,10 +398,11 @@ function CreateForm({ onSuccess }) {
 }
 
 
-// ─── Вкладки списка ──────────────────────────────────────────
+// ─── Список ──────────────────────────────────────────────────
 
-function EventList({ queryKey, queryFn, isAdmin, emptyText }) {
+function EventList({ queryKey, queryFn, emptyText }) {
   const [selected, setSelected] = useState(null);
+
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [queryKey],
     queryFn,
@@ -439,7 +410,7 @@ function EventList({ queryKey, queryFn, isAdmin, emptyText }) {
   });
 
   if (selected !== null) return (
-    <EventDetail id={selected} isAdmin={isAdmin} onBack={() => setSelected(null)} />
+    <EventDetail id={selected} onBack={() => setSelected(null)} />
   );
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -459,7 +430,7 @@ function EventList({ queryKey, queryFn, isAdmin, emptyText }) {
   return (
     <div>
       {data.map(ev => (
-        <EventCard key={ev.id} ev={ev} isAdmin={isAdmin} onClick={setSelected} />
+        <EventCard key={ev.id} ev={ev} onClick={setSelected} />
       ))}
     </div>
   );
@@ -471,16 +442,6 @@ function EventList({ queryKey, queryFn, isAdmin, emptyText }) {
 export default function Events() {
   const [tab, setTab]       = useState("upcoming");
   const [create, setCreate] = useState(false);
-
-  // Проверяем права через профиль — isAdmin приходит из API
-  // Используем getPendingEvents как индикатор (403 = не модератор)
-  const pendingQ = useQuery({
-    queryKey: ["events-pending"],
-    queryFn: getPendingEvents,
-    retry: false,
-    staleTime: 30_000,
-  });
-  const isAdmin = !pendingQ.isError; // если нет 403 — модератор/админ
 
   if (create) return <CreateForm onSuccess={() => setCreate(false)} />;
 
@@ -501,26 +462,12 @@ export default function Events() {
           onClick={() => setTab("upcoming")}>Ближайшие</button>
         <button className={"tab" + (tab === "archive" ? " active" : "")}
           onClick={() => setTab("archive")}>Архив</button>
-        {isAdmin && (
-          <button className={"tab" + (tab === "pending" ? " active" : "")}
-            onClick={() => setTab("pending")}>
-            Модерация
-            {pendingQ.data?.length > 0 && (
-              <span style={{
-                marginLeft: 4, background: "var(--danger)", color: "#fff",
-                borderRadius: "50%", width: 16, height: 16, display: "inline-flex",
-                alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700,
-              }}>{pendingQ.data.length}</span>
-            )}
-          </button>
-        )}
       </div>
 
       {tab === "upcoming" && (
         <EventList
           queryKey="events"
           queryFn={getEvents}
-          isAdmin={isAdmin}
           emptyText="Нет ближайших мероприятий"
         />
       )}
@@ -528,16 +475,7 @@ export default function Events() {
         <EventList
           queryKey="events-archive"
           queryFn={getArchiveEvents}
-          isAdmin={false}
           emptyText="Архив пуст"
-        />
-      )}
-      {tab === "pending" && isAdmin && (
-        <EventList
-          queryKey="events-pending"
-          queryFn={getPendingEvents}
-          isAdmin={isAdmin}
-          emptyText="Мероприятий на модерации нет ✅"
         />
       )}
     </div>

@@ -62,6 +62,16 @@ def setup_scheduler(scheduler: AsyncIOScheduler, bot: Bot) -> None:
     )
     log.info("📊 Ежедневная таблица турнира: 21:00 Asia/Omsk")
 
+    # ── Отправка очереди уведомлений от webapp: каждые 10 секунд ────
+    scheduler.add_job(
+        _send_pending_notifications,
+        trigger=IntervalTrigger(seconds=10),
+        args=[bot],
+        id="send_pending_notifications",
+        replace_existing=True,
+    )
+    log.info("📬 Очередь уведомлений: каждые 10 секунд")
+
     print(f"   📅 Планировщик: дайджест вс 21:00 ({OMSK_TZ})")
 
 
@@ -176,3 +186,102 @@ async def _publish_daily_tournament_table(bot: Bot) -> None:
         await bot.send_message(config.GROUP_ID, "\n".join(lines))
     except Exception as e:
         log.error(f"Ошибка публикации ежедневной таблицы: {e}")
+
+async def _notify_pending_events(bot: Bot) -> None:
+    """
+    Каждые 2 минуты проверяет новые мероприятия на модерации
+    и уведомляет администраторов/модераторов.
+    Чтобы не дублировать — после отправки ставит notified_at.
+    """
+    from database import async_session
+    from models import Event, Moderator
+    from sqlalchemy import select
+    from keyboards import get_event_moderation_kb
+    from services.events import format_announce
+
+    async with async_session() as session:
+        # Берём только не уведомлённые pending события
+        res = await session.execute(
+            select(Event).where(
+                Event.is_pending == True,
+                Event.is_active == True,
+                Event.notified_at == None,
+            )
+        )
+        events = res.scalars().all()
+
+        if not events:
+            return
+
+        # Собираем список получателей
+        mods_res = await session.execute(select(Moderator))
+        mods = mods_res.scalars().all()
+        recipients = list(config.ADMIN_IDS) + [
+            m.tg_id for m in mods if m.tg_id not in config.ADMIN_IDS
+        ]
+
+        for event in events:
+            try:
+                text = (
+                    f"🆕 <b>Новое мероприятие на модерации</b>\n\n"
+                    f"{format_announce(event)}\n\n"
+                    f"Создал: ID <code>{event.created_by}</code>"
+                )
+                kb = get_event_moderation_kb(event.id)
+
+                for tg_id in recipients:
+                    try:
+                        await bot.send_message(tg_id, text, reply_markup=kb)
+                    except Exception:
+                        pass
+
+                # Помечаем как уведомлённое
+                from datetime import datetime
+                event.notified_at = datetime.now()
+
+            except Exception as e:
+                log.error(f"Ошибка уведомления о событии {event.id}: {e}")
+
+        await session.commit()
+
+
+async def _send_pending_notifications(bot) -> None:
+    """Забирает уведомления из таблицы pending_notifications и отправляет их."""
+    from sqlalchemy import select, update
+    from database import async_session
+    from models import PendingNotification
+    import json
+    from aiogram.types import InlineKeyboardMarkup
+
+    async with async_session() as session:
+        res = await session.execute(
+            select(PendingNotification)
+            .where(PendingNotification.sent == False)
+            .order_by(PendingNotification.created_at)
+            .limit(20)
+        )
+        pending = res.scalars().all()
+
+        for notif in pending:
+            try:
+                kb = None
+                if notif.kb_json:
+                    try:
+                        kb = InlineKeyboardMarkup.model_validate_json(notif.kb_json)
+                    except Exception:
+                        kb = None
+
+                await bot.send_message(
+                    notif.user_tg_id,
+                    notif.text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+                notif.sent = True
+            except Exception as e:
+                import logging
+                logging.getLogger("scheduler").warning(
+                    f"Не удалось отправить уведомление {notif.id}: {e}"
+                )
+
+        await session.commit()

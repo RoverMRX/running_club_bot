@@ -64,16 +64,18 @@ export const getMyReports = (page = 0) => api.get("/reports/my", { params: { pag
 // ─── Мероприятия ─────────────────────────────────────────────
 export const getEvents         = (upcomingOnly = true) => api.get("/events", { params: { upcoming_only: upcomingOnly } }).then(r => r.data);
 export const getArchiveEvents  = () => api.get("/events", { params: { upcoming_only: false } }).then(r => r.data);
-export const getPendingEvents  = () => api.get("/events/pending").then(r => r.data);
 export const getEvent          = (id) => api.get(`/events/${id}`).then(r => r.data);
 export const getEventTemplates = () => api.get("/events/templates").then(r => r.data);
 export const createEvent       = (data) => api.post("/events", data).then(r => r.data);
 export const joinEvent         = (id) => api.post(`/events/${id}/join`).then(r => r.data);
 export const leaveEvent        = (id) => api.post(`/events/${id}/leave`).then(r => r.data);
-export const approveEvent      = (id) => api.post(`/events/${id}/approve`).then(r => r.data);
-export const rejectEvent       = (id, reason = "") => api.post(`/events/${id}/reject`, { reason }).then(r => r.data);
 
 // ─── Турниры ─────────────────────────────────────────────────
-export const getTournaments = (activeOnly = true) => api.get("/tournaments", { params: { active_only: activeOnly } }).then(r => r.data);
-export const getTournament  = (id) => api.get(`/tournaments/${id}`).then(r => r.data);
-export const joinTournament = (id) => api.post(`/tournaments/${id}/join`).then(r => r.data);
+export const getTournaments        = () => api.get("/tournaments").then(r => r.data);
+export const getTournamentsArchive = () => api.get("/tournaments/archive").then(r => r.data);
+export const getTournament         = (id) => api.get(`/tournaments/${id}`).then(r => r.data);
+export const joinTournament        = (id) => api.post(`/tournaments/${id}/join`).then(r => r.data);
+
+// ─── Челленджи — доп. действия ───────────────────────────────
+export const requestCloseChallenge = (id) => api.post(`/challenges/${id}/request-close`).then(r => r.data);
+export const freezeChallenge       = (id, days) => api.post(`/challenges/${id}/freeze`, { days }).then(r => r.data);

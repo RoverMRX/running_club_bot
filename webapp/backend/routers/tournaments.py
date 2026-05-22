@@ -48,11 +48,9 @@ async def get_tournaments(
     db: AsyncSession = Depends(get_db),
     active_only: bool = True,
 ) -> list[TournamentOut]:
-    """Список турниров."""
+    """Список активных турниров."""
     user_id = tg_user["id"]
-    q = select(WeeklyTournament)
-    if active_only:
-        q = q.where(WeeklyTournament.is_active == True)
+    q = select(WeeklyTournament).where(WeeklyTournament.is_active == True)
     q = q.order_by(WeeklyTournament.created_at.desc())
     res = await db.execute(q)
     tournaments = res.scalars().all()
@@ -81,6 +79,36 @@ async def get_tournaments(
         ))
     return result
 
+
+
+@router.get("/archive", response_model=list[TournamentOut])
+async def get_tournaments_archive(
+    tg_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[TournamentOut]:
+    """Завершённые турниры."""
+    user_id = tg_user["id"]
+    q = select(WeeklyTournament).where(WeeklyTournament.is_active == False)
+    q = q.order_by(WeeklyTournament.end_date.desc()).limit(20)
+    res = await db.execute(q)
+    tournaments = res.scalars().all()
+
+    result = []
+    for t in tournaments:
+        joined_res = await db.execute(
+            select(TournamentParticipant).where(
+                TournamentParticipant.tournament_id == t.id,
+                TournamentParticipant.user_tg_id == user_id,
+            )
+        )
+        user_joined = joined_res.scalar_one_or_none() is not None
+        leaderboard = await _build_leaderboard(t.id, db)
+        result.append(TournamentOut(
+            id=t.id, title=t.title, tournament_type=t.tournament_type,
+            start_date=t.start_date, end_date=t.end_date, is_active=t.is_active,
+            leaderboard=leaderboard, user_joined=user_joined,
+        ))
+    return result
 
 @router.get("/{tournament_id}", response_model=TournamentOut)
 async def get_tournament(

@@ -25,6 +25,9 @@ async def init_db() -> None:
         "ALTER TABLE challenge_participants ADD COLUMN penalty TEXT",
         # tournament_id уже есть в модели, но мог быть создан без него
         "ALTER TABLE reports ADD COLUMN tournament_id_v2 INTEGER",  # noqa: не нужна, просто guard
+        # close_requested и очередь уведомлений
+        "ALTER TABLE challenges ADD COLUMN close_requested BOOLEAN DEFAULT 0",
+        "CREATE TABLE IF NOT EXISTS pending_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_tg_id INTEGER NOT NULL, text TEXT NOT NULL, kb_json TEXT, created_at DATETIME, sent BOOLEAN DEFAULT 0)",
     ]
 
     async with async_session() as session:

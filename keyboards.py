@@ -4,7 +4,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-# ─── Главное меню ────────────────────────────────────────────
+# ─── Главное меню ───────────────────────────────────────────────────────────
 
 def get_main_kb() -> ReplyKeyboardMarkup:
     """Главное меню для обычных пользователей."""
@@ -40,7 +40,7 @@ def get_cancel_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ─── Подменю: Челленджи ──────────────────────────────────────
+# ─── Подменю: Челленджи ──────────────────────────────────────────────────────
 
 def get_challenges_menu_kb() -> ReplyKeyboardMarkup:
     """Подменю раздела Челленджи."""
@@ -55,14 +55,14 @@ def get_challenges_menu_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ─── Подменю: Мероприятия ────────────────────────────────────
+# ─── Подменю: Мероприятия ────────────────────────────────────────────────────
 
 def get_events_menu_kb() -> ReplyKeyboardMarkup:
-    """Подменю раздела Мероприятия."""
+    """Подменю раздела Мероприятия для обычных пользователей."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📋 Ближайшие мероприятия")],
-            [KeyboardButton(text="📅 Создать мероприятие")],
+            [KeyboardButton(text="➕ Создать мероприятие")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],
         resize_keyboard=True,
@@ -70,16 +70,16 @@ def get_events_menu_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ─── Подменю: Администрирование ──────────────────────────────
+# ─── Подменю: Администрирование ──────────────────────────────────────────────
 
 def get_admin_main_kb() -> ReplyKeyboardMarkup:
-    """Панель администратора — тексты совпадают с handlers/admin.py."""
+    """Панель для администраторов."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🕐 Мероприятия на модерации")],
-            [KeyboardButton(text="📋 Шаблоны мероприятий")],
+            [KeyboardButton(text="🗂 На модерации")],
+            [KeyboardButton(text="📐 Шаблоны мероприятий")],
             [KeyboardButton(text="🏆 Создать турнир")],
-            [KeyboardButton(text="👥 Управление модераторами")],
+            [KeyboardButton(text="👥 Модераторы")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],
         resize_keyboard=True,
@@ -88,10 +88,10 @@ def get_admin_main_kb() -> ReplyKeyboardMarkup:
 
 
 def get_moderator_main_kb() -> ReplyKeyboardMarkup:
-    """Панель модератора (без управления модераторами и шаблонами)."""
+    """Панель для модераторов (без управления модераторами и шаблонами)."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🕐 Мероприятия на модерации")],
+            [KeyboardButton(text="🗂 На модерации")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],
         resize_keyboard=True,
@@ -122,7 +122,7 @@ def get_templates_manage_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ─── FSM регистрации ─────────────────────────────────────────
+# ─── FSM регистрации ─────────────────────────────────────────────────────────
 
 def get_registration_start_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -141,7 +141,7 @@ def get_registration_cancel_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ─── Отчёты ──────────────────────────────────────────────────
+# ─── Отчёты ──────────────────────────────────────────────────────────────────
 
 def get_report_vote_kb(report_id: int, pos: int = 0, neg: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -184,7 +184,7 @@ def get_report_rejected_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-# ─── Мероприятия ─────────────────────────────────────────────
+# ─── Мероприятия ─────────────────────────────────────────────────────────────
 
 def get_event_participants_kb(event_id: int, going_count: int, not_going_count: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -224,7 +224,7 @@ def get_event_secondary_kb(event_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-# ─── Челленджи ───────────────────────────────────────────────
+# ─── Челленджи ───────────────────────────────────────────────────────────────
 
 def get_join_challenge_kb(challenge_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -284,7 +284,7 @@ def get_challenge_link_kb(
     return builder.as_markup()
 
 
-# ─── Турниры ─────────────────────────────────────────────────
+# ─── Турниры ─────────────────────────────────────────────────────────────────
 
 def get_tournament_kb(tournament_id: int, joined: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -295,7 +295,7 @@ def get_tournament_kb(tournament_id: int, joined: bool = False) -> InlineKeyboar
     return builder.as_markup()
 
 
-# ─── Утилиты ─────────────────────────────────────────────────
+# ─── Утилиты ─────────────────────────────────────────────────────────────────
 
 def get_noop_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()

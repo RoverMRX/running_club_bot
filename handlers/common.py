@@ -13,7 +13,8 @@ from database import async_session
 from models import User
 from keyboards import (
     get_main_kb, get_main_kb_with_admin, get_cancel_kb,
-    get_registration_start_kb, get_admin_main_kb
+    get_registration_start_kb, get_admin_main_kb,
+    get_challenges_menu_kb, get_events_menu_kb,
 )
 from services import users as users_service
 
@@ -333,7 +334,7 @@ async def cmd_help(message: types.Message):
         "🌱 Новичок (0-4 лвл)\n"
         "🌿 Бегун (5-19 лвл)\n"
         "🌳 Атлет (20+ лвл)\n"
-        "1 Level = 100 XP\n\n"
+        "Уровни: 0→1: 100 XP, 1→2: 200 XP, 2→3: 300 XP, ...\n\n"
 
         "<b>💠 XP за:</b>\n"
         "• 1 км = 10 XP\n"
@@ -360,6 +361,18 @@ async def cmd_admin(message: types.Message):
 # ─────────────────────────────────────────
 # Навигация
 # ─────────────────────────────────────────
+
+@router.message(F.text == "🎯 Челленджи")
+async def menu_challenges(message: types.Message):
+    """Открыть подменю Челленджи."""
+    await message.answer("🎯 <b>Челленджи</b>", reply_markup=get_challenges_menu_kb())
+
+
+@router.message(F.text == "📅 Мероприятия")
+async def menu_events(message: types.Message):
+    """Открыть подменю Мероприятия."""
+    await message.answer("📅 <b>Мероприятия</b>", reply_markup=get_events_menu_kb())
+
 
 @router.message(F.text == "⬅️ Главное меню")
 async def back_to_main(message: types.Message):
