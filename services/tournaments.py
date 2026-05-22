@@ -184,7 +184,55 @@ async def join_tournament(tournament_id: int, user_tg_id: int) -> dict:
             await session.rollback()
             return {"error": "already_joined"}
 
+    # Ретроактивный зачёт пробежек за период турнира
+    await _retroactive_score(tournament_id, user_tg_id)
+
     return {"ok": True}
+
+
+async def _retroactive_score(tournament_id: int, user_tg_id: int) -> None:
+    """Засчитать уже одобренные отчёты пользователя за период турнира."""
+    async with async_session() as session:
+        t_res = await session.execute(
+            select(WeeklyTournament).where(WeeklyTournament.id == tournament_id)
+        )
+        tournament = t_res.scalar_one_or_none()
+        if not tournament:
+            return
+
+        from models import Report
+        reports_res = await session.execute(
+            select(Report).where(
+                Report.user_tg_id == user_tg_id,
+                Report.is_approved == True,
+                Report.created_at >= tournament.started_at,
+            )
+        )
+        reports = reports_res.scalars().all()
+
+        total_score = 0.0
+        for r in reports:
+            t_type = tournament.tournament_type
+            if t_type in ("km", "team_km"):
+                total_score += r.km or 0
+            elif t_type == "minutes":
+                total_score += r.duration_min or 0
+            else:  # days
+                total_score += 1
+
+        if total_score <= 0:
+            return
+
+        p_res = await session.execute(
+            select(TournamentParticipant).where(
+                TournamentParticipant.tournament_id == tournament_id,
+                TournamentParticipant.user_tg_id == user_tg_id,
+            )
+        )
+        participant = p_res.scalar_one_or_none()
+        if participant:
+            participant.score = total_score
+            await session.commit()
 
 
 # ─────────────────────────────────────────────────────────────

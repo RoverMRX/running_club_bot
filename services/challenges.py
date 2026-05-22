@@ -298,16 +298,16 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
                     ch.result = "completed"
                     completed.append(ch.title)
 
-            # Присоединённые челленджи
+            # Присоединённые челленджи — явный JOIN чтобы избежать lazy load
             joined_res = await session.execute(
-                select(ChallengeParticipant).where(
-                    ChallengeParticipant.user_id == user_id
+                select(ChallengeParticipant, Challenge)
+                .join(Challenge, Challenge.id == ChallengeParticipant.challenge_id)
+                .where(
+                    ChallengeParticipant.user_id == user_id,
+                    Challenge.is_active == True,
                 )
             )
-            for part in joined_res.scalars().all():
-                ch = part.challenge
-                if not ch or not ch.is_active:
-                    continue
+            for part, ch in joined_res.all():
                 if ch.pause_until and ch.pause_until > now:
                     continue
                 if not is_run_counts(ch, km, minutes):

@@ -138,7 +138,7 @@ async def _get_participant_events(user_tg_id: int) -> list:
                 EventParticipant.status == "going",
                 Event.is_active == True,    # noqa: E712
                 Event.is_pending == False,  # noqa: E712
-                Event.event_date >= now,
+                Event.event_date <= now,  # только прошедшие
             )
             .order_by(Event.event_date.asc())
         )
@@ -620,12 +620,12 @@ async def cb_admin_approve(callback: types.CallbackQuery, bot: Bot):
     ap = await approve_report(report_id)
 
     if not ap['ok']:
-        if ap['reason'] == 'already':
-            return await callback.answer("Отчёт уже одобрен.")
         return await callback.answer(ap['reason'])
 
-    await _notify_athlete(bot, ap)
-    await _notify_group_approved(bot, ap)
+    # Уведомляем только если не был уже одобрен ранее
+    if not ap.get('already_approved'):
+        await _notify_athlete(bot, ap)
+        await _notify_group_approved(bot, ap)
     await _clear_vote_buttons(bot, report_id)
 
     try:
@@ -822,11 +822,20 @@ async def _notify_athlete(bot: Bot, ap: dict) -> None:
         updated_text = f"\n🏃 Прогресс в челленджах: {names}"
 
     try:
+        # Детализация XP
+        from config import XP_PER_KM
+        km_xp = int(ap['km'] * XP_PER_KM)
+        xp_detail = f"  └ {ap['km']} км × {XP_PER_KM} = {km_xp} XP"
+        if ap.get('is_pr'):
+            from config import XP_PR_BONUS
+            xp_detail += f"\n  └ 🎯 Личный рекорд +{XP_PR_BONUS} XP"
+
         await bot.send_message(
             ap['user_tg_id'],
             f"✅ <b>Отчёт принят!</b>\n\n"
             f"📝 {ap['km']} км\n"
-            f"💠 +{ap['xp']} XP"
+            f"💠 +{ap['xp']} XP\n"
+            f"{xp_detail}"
             f"{pr_line}"
             f"{updated_text}"
             f"{completed_text}",

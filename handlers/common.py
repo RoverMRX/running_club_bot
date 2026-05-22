@@ -258,11 +258,16 @@ async def cmd_profile(message: types.Message):
         "",
     ]
 
-    if own_challenges:
+    joined_challenges = profile.get('joined_challenges', [])
+    active_joined = [ch for ch in joined_challenges if ch and ch.is_active]
+
+    if own_challenges or active_joined:
         lines.append("<b>Активные челленджи:</b>")
         for ch in own_challenges:
             icon = "📜" if ch.ch_type == "weekly_runs" else "🎯"
             lines.append(f"  {icon} {ch.title}")
+        for ch in active_joined:
+            lines.append(f"  🤝 {ch.title} (участвую)")
     else:
         lines.append("<i>Нет активных челленджей. Создай свой! 🏃</i>")
 

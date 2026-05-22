@@ -280,6 +280,7 @@ async def approve_report(report_id: int) -> dict:
                     'ok': True, 'reason': 'already',
                     'user_tg_id': report.user_tg_id, 'km': report.km,
                     'xp': 0, 'is_pr': False, 'updated': [], 'completed': [],
+                    'already_approved': True,
                 }
 
             # Бонусы мероприятия
