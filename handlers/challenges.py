@@ -618,13 +618,29 @@ class ChallengeRequestStates(StatesGroup):
 async def cmd_my_challenges(message: Message) -> None:
     user_id = message.from_user.id
     async with async_session() as session:
-        res = await session.execute(
+        # Свои челленджи
+        own_res = await session.execute(
             _sa_select(Challenge).where(
                 Challenge.user_id == user_id,
                 Challenge.is_active == True,
             ).order_by(Challenge.created_at.desc())
         )
-        challenges = list(res.scalars().all())
+        own = list(own_res.scalars().all())
+
+        # Присоединённые (участник, но не автор)
+        from models import ChallengeParticipant as _CP
+        joined_res = await session.execute(
+            _sa_select(Challenge)
+            .join(_CP, _CP.challenge_id == Challenge.id)
+            .where(
+                _CP.user_id == user_id,
+                Challenge.user_id != user_id,
+                Challenge.is_active == True,
+                _CP.result.is_(None),  # только активное участие
+            ).order_by(Challenge.created_at.desc())
+        )
+        joined = list(joined_res.scalars().all())
+        challenges = own + joined
 
     if not challenges:
         await message.answer(
@@ -682,32 +698,47 @@ async def cb_my_open(call: CallbackQuery) -> None:
 
     is_paused = bool(ch.pause_until and ch.pause_until > _dt.now())
 
-    if ch.is_active:
-        if not ch.close_requested:
-            builder.button(text="🏁 Запросить завершение",
-                           callback_data=f"bot_req_close:{ch.id}:{page}")
-        else:
-            builder.button(text="⏳ Завершение на рассмотрении", callback_data="noop")
-
-        if is_paused:
-            builder.button(text="▶️ Запросить разморозку",
-                           callback_data=f"bot_req_unfreeze:{ch.id}:{page}")
-        elif not ch.pause_requested:
-            builder.button(text="⏸ Запросить паузу",
-                           callback_data=f"bot_req_pause:{ch.id}:{page}")
-        else:
-            builder.button(text="⏳ Пауза на рассмотрении", callback_data="noop")
-
-    # Кнопка сдаться для участника (не автора)
+    # Получаем запись участника если не автор
+    _part = None
     if not is_owner:
-        # Проверяем есть ли активное участие
         async with async_session() as _s:
             from models import ChallengeParticipant as _CP
             _pr = await _s.execute(select(_CP).where(
                 _CP.challenge_id == ch.id, _CP.user_id == call.from_user.id
             ))
             _part = _pr.scalar_one_or_none()
-        if _part and not _part.result and ch.is_active:
+
+    if ch.is_active:
+        if is_owner:
+            # Кнопки для автора
+            if not ch.close_requested:
+                builder.button(text="🏁 Запросить завершение",
+                               callback_data=f"bot_req_close:{ch.id}:{page}")
+            else:
+                builder.button(text="⏳ Завершение на рассмотрении", callback_data="noop")
+
+            if is_paused:
+                builder.button(text="▶️ Запросить разморозку",
+                               callback_data=f"bot_req_unfreeze:{ch.id}:{page}")
+            elif not ch.pause_requested:
+                builder.button(text="⏸ Запросить паузу",
+                               callback_data=f"bot_req_pause:{ch.id}:{page}")
+            else:
+                builder.button(text="⏳ Пауза на рассмотрении", callback_data="noop")
+
+        elif _part and not _part.result:
+            # Кнопки для участника
+            if not getattr(_part, "close_requested", False):
+                builder.button(text="🏁 Запросить завершение участия",
+                               callback_data=f"part_req_close:{ch.id}:{page}")
+            else:
+                builder.button(text="⏳ Завершение на рассмотрении", callback_data="noop")
+            if is_paused:
+                builder.button(text="▶️ Запросить разморозку",
+                               callback_data=f"bot_req_unfreeze:{ch.id}:{page}")
+            else:
+                builder.button(text="⏸ Запросить паузу участия",
+                               callback_data=f"part_req_pause:{ch.id}:{page}")
             builder.button(text="🏳️ Сдаться",
                            callback_data=f"ch_surrender_ask:{ch.id}:{page}")
 
@@ -997,6 +1028,129 @@ async def cb_surrender_confirm(call: CallbackQuery) -> None:
         reply_markup=kb.as_markup(), parse_mode="HTML"
     )
     await call.answer("Сдача зафиксирована.")
+
+
+# ─── Запрос завершения участия (participant, не автор) ──────
+
+@router.callback_query(F.data.startswith("part_req_close:"))
+async def cb_part_req_close(call: CallbackQuery) -> None:
+    """Участник просит завершить своё участие досрочно (без штрафа, на усмотрение админа)."""
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    user_id = call.from_user.id
+
+    async with async_session() as session:
+        from models import ChallengeParticipant as _CP
+        p_res = await session.execute(
+            select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == user_id)
+        )
+        part = p_res.scalar_one_or_none()
+        if not part or part.result:
+            await call.answer("Участие уже завершено.", show_alert=True)
+            return
+        ch_res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = ch_res.scalar_one_or_none()
+        title = ch.title if ch else "Челлендж"
+        if hasattr(part, "close_requested"):
+            part.close_requested = True
+            await session.commit()
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        from models import User as _User
+        u = await session.execute(_sel(_User).where(_User.tg_id == user_id))
+        user = u.scalar_one_or_none()
+    author_nick = f"@{user.username}" if user and user.username else (user.school_nick if user else str(user_id))
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Закрыть без штрафа",  callback_data=f"part_close_ok:{challenge_id}:{user_id}")
+    kb.button(text="❌ Отказать",             callback_data=f"part_close_no:{challenge_id}:{user_id}")
+    kb.adjust(2)
+    await _notify_admins_challenge(
+        call.bot,
+        f"🏁 <b>Запрос на закрытие участия</b>\n\n"
+        f"Челлендж: <b>{title}</b>\n"
+        f"Участник: {author_nick}\n\n"
+        f"Закрыть участие без штрафа?",
+        kb.as_markup()
+    )
+    await call.answer("Запрос отправлен администратору.")
+
+
+@router.callback_query(F.data.startswith("part_close_ok:"))
+async def cb_part_close_ok(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+    parts = call.data.split(":")
+    challenge_id, target_user_id = int(parts[1]), int(parts[2])
+
+    async with async_session() as session:
+        from models import ChallengeParticipant as _CP
+        p_res = await session.execute(
+            select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == target_user_id)
+        )
+        part = p_res.scalar_one_or_none()
+        if not part:
+            await call.answer("Участник не найден.", show_alert=True)
+            return
+        part.result = "closed"
+        ch_res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
+        ch = ch_res.scalar_one_or_none()
+        title = ch.title if ch else "Челлендж"
+        await session.commit()
+
+    try:
+        await call.bot.send_message(
+            target_user_id,
+            f"✅ Твоё участие в челлендже <b>«{title}»</b> закрыто без штрафа администратором.",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+    await call.message.edit_text(call.message.text + "\n\n✅ <b>Закрыто без штрафа.</b>", parse_mode="HTML")
+    await call.answer("Участие закрыто.")
+
+
+@router.callback_query(F.data.startswith("part_close_no:"))
+async def cb_part_close_no(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+    parts = call.data.split(":")
+    challenge_id, target_user_id = int(parts[1]), int(parts[2])
+
+    try:
+        await call.bot.send_message(
+            target_user_id,
+            "❌ Запрос на закрытие участия отклонён администратором.\nПродолжай бежать! 🏃",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+    await call.message.edit_text(call.message.text + "\n\n❌ <b>Отказано.</b>", parse_mode="HTML")
+    await call.answer("Запрос отклонён.")
+
+
+# ─── Запрос паузы участия (participant) ──────────────────────
+
+@router.callback_query(F.data.startswith("part_req_pause:"))
+async def cb_part_req_pause(call: CallbackQuery, state: FSMContext) -> None:
+    """Участник просит паузу своего участия."""
+    parts = call.data.split(":")
+    challenge_id, page = int(parts[1]), int(parts[2])
+    await state.set_state(ChallengeRequestStates.enter_pause_reason)
+    await state.update_data(challenge_id=challenge_id, page=page, is_participant=True)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Без причины ➡️", callback_data="bot_pause_no_reason")
+    kb.adjust(1)
+    await call.message.edit_text(
+        "⏸ <b>Запрос на паузу участия</b>\n\nУкажи причину (или нажми «Без причины»):",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer()
 
 
 # ─── Запрос завершения через бота (FSM) ─────────────────────

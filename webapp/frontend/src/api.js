@@ -81,4 +81,6 @@ export const requestCloseChallenge = (id) => api.post(`/challenges/${id}/request
 export const freezeChallenge        = (id, days) => api.post(`/challenges/${id}/freeze`, { days }).then(r => r.data);
 export const requestPauseChallenge  = (id, reason) => api.post(`/challenges/${id}/request-pause`, { reason }).then(r => r.data);
 export const requestUnfreezeChallenge = (id) => api.post(`/challenges/${id}/request-unfreeze`).then(r => r.data);
-export const surrenderChallenge       = (id) => api.post(`/challenges/${id}/surrender`).then(r => r.data);
+export const surrenderChallenge              = (id) => api.post(`/challenges/${id}/surrender`).then(r => r.data);
+export const requestCloseParticipation       = (id) => api.post(`/challenges/${id}/request-close-participation`).then(r => r.data);
+export const requestPauseParticipation       = (id, reason) => api.post(`/challenges/${id}/request-pause-participation`, { reason }).then(r => r.data);

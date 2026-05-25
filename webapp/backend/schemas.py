@@ -33,7 +33,9 @@ class ChallengeParticipantOut(BaseModel):
     penalty:       str | None
     current_runs:  int
     current_value: float
-    result:        str | None = None
+    result:          str | None = None
+    close_requested: bool = False
+    pause_requested: bool = False
 
     class Config:
         from_attributes = True

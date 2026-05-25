@@ -446,6 +446,7 @@ async def cmd_challenge_requests(message: Message) -> None:
                 or_(
                     Challenge.close_requested == True,
                     Challenge.pause_requested == True,
+                    Challenge.pause_until != None,
                 )
             )
             .order_by(Challenge.created_at.desc())

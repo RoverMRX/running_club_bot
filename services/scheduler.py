@@ -376,9 +376,15 @@ async def _send_pending_notifications(bot) -> None:
         for notif in pending:
             try:
                 kb = None
+                thread_id = None
                 if notif.kb_json:
                     try:
-                        kb = InlineKeyboardMarkup.model_validate_json(notif.kb_json)
+                        raw = json.loads(notif.kb_json)
+                        # Если это служебный объект с thread_id — не парсим как клавиатуру
+                        if isinstance(raw, dict) and "thread_id" in raw and "inline_keyboard" not in raw:
+                            thread_id = raw.get("thread_id")
+                        else:
+                            kb = InlineKeyboardMarkup.model_validate_json(notif.kb_json)
                     except Exception:
                         kb = None
 
@@ -386,6 +392,7 @@ async def _send_pending_notifications(bot) -> None:
                     notif.user_tg_id,
                     notif.text,
                     reply_markup=kb,
+                    message_thread_id=thread_id,
                     parse_mode="HTML",
                 )
                 notif.sent = True

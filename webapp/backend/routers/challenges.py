@@ -81,6 +81,8 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
             user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
             penalty=p.penalty, current_runs=p.current_runs, current_value=p.current_value,
             result=p.result,
+            close_requested=bool(getattr(p, "close_requested", False)),
+            pause_requested=bool(getattr(p, "pause_requested", False)),
         ))
 
     is_owner = viewer_id is not None and ch.user_id == viewer_id
@@ -346,7 +348,7 @@ async def request_close_challenge(
             f"Прогресс: {progress}\n\n"
             f"Разрешить досрочное завершение?"
         )
-        await _notify_admins(text, kb.as_markup())
+        await _notify_admins(text, kb.as_markup(), db)
     except Exception as e:
         import logging
         logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")
@@ -392,13 +394,126 @@ async def surrender_challenge(
     try:
         from notify import queue_message as _qm
         import config as _cfg
-        if _cfg.GROUP_ID:
-            await _qm(db, _cfg.GROUP_ID,
-                f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}")
+        if _cfg.DIGEST_THREAD_ID and _cfg.GROUP_ID:
+            # Сообщение в болталку через pending_notifications
+            # GROUP_ID используем как user_id — бот сам опубликует в нужный топик
+            import json as _json
+            from models import PendingNotification
+            db.add(PendingNotification(
+                user_tg_id=_cfg.GROUP_ID,
+                text=f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}",
+                kb_json=_json.dumps({"thread_id": _cfg.DIGEST_THREAD_ID}),
+            ))
+            await db.commit()
     except Exception:
         pass
 
     return OkResponse(ok=True, reason="Ты вышел из челленджа. Результат зафиксирован как не выполнен.")
+
+
+# ─── Запросы участника (не автора) ─────────────────────────
+
+@router.post("/{challenge_id}/request-close-participation", response_model=OkResponse)
+async def request_close_participation(
+    challenge_id: int,
+    tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Участник просит закрыть его участие без штрафа."""
+    user_id = tg_user["id"]
+    from models import ChallengeParticipant as CP
+    p_res = await db.execute(
+        select(CP).where(CP.challenge_id == challenge_id, CP.user_id == user_id)
+    )
+    part = p_res.scalar_one_or_none()
+    if not part:
+        return OkResponse(ok=False, reason="Ты не участник.")
+    if part.result:
+        return OkResponse(ok=False, reason="Участие уже завершено.")
+    if part.close_requested:
+        return OkResponse(ok=False, reason="Запрос уже отправлен.")
+
+    ch_res = await db.execute(select(Challenge).where(Challenge.id == challenge_id))
+    ch = ch_res.scalar_one_or_none()
+    if not ch or not ch.is_active:
+        return OkResponse(ok=False, reason="Челлендж не найден.")
+
+    part.close_requested = True
+    await db.commit()
+
+    nick_res = await db.execute(select(User.school_nick, User.username).where(User.tg_id == user_id))
+    u_row = nick_res.one_or_none()
+    name = f"@{u_row[1]}" if u_row and u_row[1] else (u_row[0] if u_row else str(user_id))
+
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Закрыть без штрафа", callback_data=f"part_close_ok:{challenge_id}:{user_id}")
+        kb.button(text="❌ Отказать",           callback_data=f"part_close_no:{challenge_id}:{user_id}")
+        kb.adjust(2)
+        await _notify_admins(
+            f"🏁 <b>Запрос на закрытие участия</b>\n\n"
+            f"Челлендж: <b>{ch.title}</b>\n"
+            f"Участник: {name}\n\n"
+            f"Закрыть без штрафа?",
+            kb.as_markup(), db
+        )
+    except Exception:
+        pass
+
+    return OkResponse(ok=True, reason="Запрос отправлен администратору.")
+
+
+@router.post("/{challenge_id}/request-pause-participation", response_model=OkResponse)
+async def request_pause_participation(
+    challenge_id: int, body: PauseRequest,
+    tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Участник просит паузу своего участия."""
+    user_id = tg_user["id"]
+    from models import ChallengeParticipant as CP
+    p_res = await db.execute(
+        select(CP).where(CP.challenge_id == challenge_id, CP.user_id == user_id)
+    )
+    part = p_res.scalar_one_or_none()
+    if not part:
+        return OkResponse(ok=False, reason="Ты не участник.")
+    if part.result:
+        return OkResponse(ok=False, reason="Участие уже завершено.")
+    if part.pause_requested:
+        return OkResponse(ok=False, reason="Запрос уже отправлен.")
+
+    ch_res = await db.execute(select(Challenge).where(Challenge.id == challenge_id))
+    ch = ch_res.scalar_one_or_none()
+    if not ch or not ch.is_active:
+        return OkResponse(ok=False, reason="Челлендж не найден.")
+
+    part.pause_requested = True
+    part.pause_reason = body.reason.strip() if body.reason else None
+    await db.commit()
+
+    nick_res = await db.execute(select(User.school_nick, User.username).where(User.tg_id == user_id))
+    u_row = nick_res.one_or_none()
+    name = f"@{u_row[1]}" if u_row and u_row[1] else (u_row[0] if u_row else str(user_id))
+
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="⏸ Одобрить паузу", callback_data=f"part_pause_ok:{challenge_id}:{user_id}")
+        kb.button(text="❌ Отказать",      callback_data=f"part_pause_no:{challenge_id}:{user_id}")
+        kb.adjust(2)
+        reason_str = f"\nПричина: {part.pause_reason}" if part.pause_reason else ""
+        await _notify_admins(
+            f"⏸ <b>Запрос на паузу участия</b>\n\n"
+            f"Челлендж: <b>{ch.title}</b>\n"
+            f"Участник: {name}"
+            f"{reason_str}\n\n"
+            f"Одобрить паузу участника?",
+            kb.as_markup(), db
+        )
+    except Exception:
+        pass
+
+    return OkResponse(ok=True, reason="Запрос на паузу отправлен администратору.")
 
 
 # ─── Запрос на паузу (автор → уведомление admin) ───────────
@@ -449,7 +564,7 @@ async def request_pause_challenge(
             f"{reason_str}\n\n"
             f"Одобрить паузу?"
         )
-        await _notify_admins(text, kb.as_markup())
+        await _notify_admins(text, kb.as_markup(), db)
     except Exception as e:
         import logging
         logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")
@@ -490,7 +605,7 @@ async def request_unfreeze_challenge(
             f"Автор: {author_nick}\n\n"
             f"Разморозить челлендж?"
         )
-        await _notify_admins(text, kb.as_markup())
+        await _notify_admins(text, kb.as_markup(), db)
     except Exception as e:
         import logging
         logging.getLogger("challenges").warning(f"Ошибка уведомления: {e}")

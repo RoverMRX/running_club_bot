@@ -31,6 +31,8 @@ async def init_db() -> None:
         "ALTER TABLE challenges ADD COLUMN pause_reason TEXT",
         "ALTER TABLE challenge_participants ADD COLUMN result TEXT",
         "ALTER TABLE challenge_participants ADD COLUMN closed_reason TEXT",
+        "ALTER TABLE challenge_participants ADD COLUMN close_requested BOOLEAN DEFAULT 0",
+        "ALTER TABLE challenge_participants ADD COLUMN pause_requested BOOLEAN DEFAULT 0",
         "ALTER TABLE challenges ADD COLUMN result TEXT",
         "ALTER TABLE challenges ADD COLUMN frozen_at DATETIME",
         "CREATE TABLE IF NOT EXISTS pending_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_tg_id INTEGER NOT NULL, text TEXT NOT NULL, kb_json TEXT, created_at DATETIME, sent BOOLEAN DEFAULT 0)",

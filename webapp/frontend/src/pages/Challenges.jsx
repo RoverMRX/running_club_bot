@@ -4,11 +4,13 @@ import {
   getMyChallenges, getMyChallengesHistory,
   getClubChallenges, getClubChallengesCount,
   getChallenge, createChallenge,
-  joinChallenge, leaveChallenge, closeChallenge,
+  joinChallenge, closeChallenge,
   requestCloseChallenge,
   requestPauseChallenge,
   requestUnfreezeChallenge,
   surrenderChallenge,
+  requestCloseParticipation,
+  requestPauseParticipation,
 } from "../api";
 import { useEffect, useRef } from "react";
 import Loader from "../components/Loader";
@@ -135,12 +137,13 @@ function ChallengeDetail({ id, onBack }) {
   };
 
   const joinMut  = useMutation({ mutationFn: () => joinChallenge(id, penalty || null), onSuccess: inv });
-  const leaveMut = useMutation({ mutationFn: () => leaveChallenge(id), onSuccess: () => { inv(); onBack(); } });
   const closeMut        = useMutation({ mutationFn: () => closeChallenge(id), onSuccess: () => { inv(); onBack(); } });
   const requestCloseMut    = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
   const requestPauseMut    = useMutation({ mutationFn: () => requestPauseChallenge(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
   const requestUnfreezeMut = useMutation({ mutationFn: () => requestUnfreezeChallenge(id), onSuccess: inv });
-  const surrenderMut       = useMutation({ mutationFn: () => surrenderChallenge(id), onSuccess: () => { inv(); setShowSurrender(false); } });
+  const surrenderMut           = useMutation({ mutationFn: () => surrenderChallenge(id), onSuccess: () => { inv(); setShowSurrender(false); } });
+  const reqClosePartMut        = useMutation({ mutationFn: () => requestCloseParticipation(id), onSuccess: inv });
+  const reqPausePartMut        = useMutation({ mutationFn: () => requestPauseParticipation(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -240,29 +243,53 @@ function ChallengeDetail({ id, onBack }) {
                 {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
               </button>
             )}
-            {ch.is_participant && !ch.participants.find(p => p.user_id === ch.viewer_id)?.result && (
-              <button className="btn btn-danger" style={{ fontSize: 13 }}
-                onClick={() => {
-                  setShowSurrender(true);
-                  setSurrenderCountdown(10);
-                  if (surrenderTimer.current) clearInterval(surrenderTimer.current);
-                  surrenderTimer.current = setInterval(() => {
-                    setSurrenderCountdown(v => {
-                      if (v <= 1) { clearInterval(surrenderTimer.current); return 0; }
-                      return v - 1;
-                    });
-                  }, 1000);
-                }}>
-                🏳️ Сдаться
-              </button>
-            )}
-            {ch.is_participant && (
-              <button className="btn btn-secondary" disabled={leaveMut.isPending}
-                style={{ fontSize: 13 }}
-                onClick={() => leaveMut.mutate()}>
-                {leaveMut.isPending ? "..." : "Выйти из челленджа"}
-              </button>
-            )}
+            {ch.is_participant && !ch.is_owner && (() => {
+              const myPart = ch.participants.find(p => p.user_id === ch.viewer_id);
+              const myResult = myPart?.result;
+              const myCloseReq = myPart?.close_requested;
+              const myPauseReq = myPart?.pause_requested;
+              if (myResult) return null; // уже завершено
+              return (
+                <>
+                  {/* Запрос завершения участия */}
+                  {!myCloseReq ? (
+                    <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.8 }}
+                      disabled={reqClosePartMut.isPending}
+                      onClick={() => reqClosePartMut.mutate()}>
+                      {reqClosePartMut.isPending ? "..." : "🏁 Запросить завершение"}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)" }}>⏳ Завершение на рассмотрении</div>
+                  )}
+                  {/* Запрос паузы участия */}
+                  {!ch.is_paused && !myPauseReq && (
+                    <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.8 }}
+                      onClick={() => setShowPauseForm(v => !v)}>
+                      ⏸ Запросить паузу
+                    </button>
+                  )}
+                  {myPauseReq && !ch.is_paused && (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)" }}>⏳ Пауза на рассмотрении</div>
+                  )}
+                  {/* Сдаться */}
+                  <button className="btn btn-danger" style={{ fontSize: 13 }}
+                    onClick={() => {
+                      setShowSurrender(true);
+                      setSurrenderCountdown(10);
+                      if (surrenderTimer.current) clearInterval(surrenderTimer.current);
+                      surrenderTimer.current = setInterval(() => {
+                        setSurrenderCountdown(v => {
+                          if (v <= 1) { clearInterval(surrenderTimer.current); return 0; }
+                          return v - 1;
+                        });
+                      }, 1000);
+                    }}>
+                    🏳️ Сдаться
+                  </button>
+                </>
+              );
+            })()}
+
             {!ch.is_owner && !ch.is_participant && ch.author_nick && (
               !showJoinForm ? (
                 <button className="btn btn-primary" onClick={() => setShowJoinForm(true)}>
@@ -306,22 +333,18 @@ function ChallengeDetail({ id, onBack }) {
       )}
 
       {/* Форма причины паузы */}
-      {showPauseForm && ch.is_owner && ch.is_active && !ch.is_paused && (
+      {showPauseForm && ch.is_active && !ch.is_paused && (
         <div className="card" style={{ marginTop: 0 }}>
           <div className="form-group">
             <label>Причина паузы (необязательно)</label>
             <input value={pauseReason} onChange={e => setPauseReason(e.target.value)}
               placeholder="Например: травма, командировка..." />
           </div>
-          {requestPauseMut.data && !requestPauseMut.data.ok && (
-            <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 8 }}>
-              {requestPauseMut.data.reason}
-            </div>
-          )}
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-primary" disabled={requestPauseMut.isPending}
-              onClick={() => requestPauseMut.mutate()}>
-              {requestPauseMut.isPending ? "..." : "Отправить запрос"}
+            <button className="btn btn-primary"
+              disabled={ch.is_owner ? requestPauseMut.isPending : reqPausePartMut.isPending}
+              onClick={() => ch.is_owner ? requestPauseMut.mutate() : reqPausePartMut.mutate()}>
+              {(ch.is_owner ? requestPauseMut.isPending : reqPausePartMut.isPending) ? "..." : "Отправить запрос"}
             </button>
             <button className="btn btn-secondary" onClick={() => setShowPauseForm(false)}>
               Отмена
