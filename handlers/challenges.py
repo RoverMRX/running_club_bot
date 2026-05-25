@@ -41,18 +41,22 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 async def _notify_admins_challenge(bot, text: str, kb=None) -> None:
-    """Отправляет уведомление всем админам в личку."""
+    """Отправляет уведомление всем админам и модераторам в личку."""
+    import logging as _log
+    _logger = _log.getLogger("challenges")
     from models import Moderator
     async with async_session() as session:
         from sqlalchemy import select as _sel
         mods = await session.execute(_sel(Moderator))
         mod_ids = [m.tg_id for m in mods.scalars().all()]
     recipients = list(config.ADMIN_IDS) + [m for m in mod_ids if m not in config.ADMIN_IDS]
+    _logger.info("Уведомляем %d получателей: %s", len(recipients), recipients)
     for uid in recipients:
         try:
             await bot.send_message(uid, text, reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            pass
+            _logger.info("Отправлено %s", uid)
+        except Exception as e:
+            _logger.warning("Не удалось отправить %s: %s", uid, e)
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -1242,8 +1246,12 @@ async def cb_bot_pause_no_reason(call: CallbackQuery, state: FSMContext) -> None
 async def step_bot_pause_reason(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     await state.clear()
-    await _do_bot_request_pause(message, message.bot, message.from_user.id,
-                                 data["challenge_id"], data["page"], reason=message.text.strip())
+    if data.get("is_child"):
+        await _do_child_request_pause(message, message.bot, message.from_user.id,
+                                      data["challenge_id"], data["page"], reason=message.text.strip())
+    else:
+        await _do_bot_request_pause(message, message.bot, message.from_user.id,
+                                    data["challenge_id"], data["page"], reason=message.text.strip())
 
 
 async def _do_bot_request_pause(obj, bot, user_id: int, challenge_id: int, page: int, reason) -> None:

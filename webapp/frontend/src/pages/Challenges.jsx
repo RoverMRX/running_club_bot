@@ -126,6 +126,8 @@ function ChallengeDetail({ id, onBack }) {
   const [penalty, setPenalty] = useState("");
   const [showJoinForm, setShowJoinForm] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showCloseForm, setShowCloseForm] = useState(false);
+  const [closeReason, setCloseReason] = useState("");
   const [showPauseForm, setShowPauseForm] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
   const [showSurrender, setShowSurrender] = useState(false);
@@ -147,11 +149,11 @@ function ChallengeDetail({ id, onBack }) {
 
   const joinMut  = useMutation({ mutationFn: () => joinChallenge(id, penalty || null), onSuccess: inv });
   const closeMut        = useMutation({ mutationFn: () => closeChallenge(id), onSuccess: () => { inv(); onBack(); } });
-  const requestCloseMut    = useMutation({ mutationFn: () => requestCloseChallenge(id), onSuccess: inv });
+  const requestCloseMut    = useMutation({ mutationFn: () => requestCloseChallenge(id, closeReason), onSuccess: () => { inv(); setShowCloseForm(false); } });
   const requestPauseMut    = useMutation({ mutationFn: () => requestPauseChallenge(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
   const requestUnfreezeMut = useMutation({ mutationFn: () => requestUnfreezeChallenge(id), onSuccess: inv });
   const surrenderMut           = useMutation({ mutationFn: () => surrenderChallenge(id), onSuccess: () => { inv(); setShowSurrender(false); } });
-  const reqClosePartMut        = useMutation({ mutationFn: () => requestCloseParticipation(id), onSuccess: inv });
+  const reqClosePartMut        = useMutation({ mutationFn: () => requestCloseParticipation(id, closeReason), onSuccess: () => { inv(); setShowCloseForm(false); } });
   const reqPausePartMut        = useMutation({ mutationFn: () => requestPauseParticipation(id, pauseReason), onSuccess: () => { inv(); setShowPauseForm(false); } });
 
   if (isLoading) return <Loader />;
@@ -228,8 +230,8 @@ function ChallengeDetail({ id, onBack }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {ch.is_owner && !ch.close_requested && !ch.pause_requested && !ch.is_paused && (
               <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
-                onClick={() => requestCloseMut.mutate()}>
-                {requestCloseMut.isPending ? "..." : "🏁 Запросить завершение"}
+                onClick={() => setShowCloseForm(v => !v)}>
+                🏁 Запросить завершение
               </button>
             )}
             {ch.is_owner && ch.close_requested && (
@@ -261,9 +263,8 @@ function ChallengeDetail({ id, onBack }) {
                 <>
                   {!ch.close_requested ? (
                     <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.8 }}
-                      disabled={reqClosePartMut.isPending}
-                      onClick={() => reqClosePartMut.mutate()}>
-                      {reqClosePartMut.isPending ? "..." : "🏁 Запросить завершение"}
+                      onClick={() => setShowCloseForm(v => !v)}>
+                      🏁 Запросить завершение
                     </button>
                   ) : (
                     <div style={{ fontSize: 13, color: "var(--text-muted)" }}>⏳ Завершение на рассмотрении</div>
@@ -352,6 +353,33 @@ function ChallengeDetail({ id, onBack }) {
         </div>
       )}
 
+      {/* Форма причины завершения (для owner и is_child) */}
+      {showCloseForm && ch.is_active && (
+        <div className="card" style={{ marginTop: 0 }}>
+          <div className="form-group">
+            <label>Причина завершения (необязательно)</label>
+            <input value={closeReason} onChange={e => setCloseReason(e.target.value)}
+              placeholder="Например: выполнил цель досрочно, изменились планы..." />
+          </div>
+          {(ch.is_owner ? requestCloseMut.data : reqClosePartMut.data) &&
+           !(ch.is_owner ? requestCloseMut.data?.ok : reqClosePartMut.data?.ok) && (
+            <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 8 }}>
+              {(ch.is_owner ? requestCloseMut.data?.reason : reqClosePartMut.data?.reason)}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary"
+              disabled={ch.is_owner ? requestCloseMut.isPending : reqClosePartMut.isPending}
+              onClick={() => ch.is_owner ? requestCloseMut.mutate() : reqClosePartMut.mutate()}>
+              {(ch.is_owner ? requestCloseMut.isPending : reqClosePartMut.isPending) ? "..." : "Отправить запрос"}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowCloseForm(false)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Форма причины паузы */}
       {showPauseForm && ch.is_active && !ch.is_paused && (
         <div className="card" style={{ marginTop: 0 }}>
@@ -362,9 +390,9 @@ function ChallengeDetail({ id, onBack }) {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-primary"
-              disabled={ch.is_owner ? requestPauseMut.isPending : reqPausePartMut.isPending}
-              onClick={() => ch.is_owner ? requestPauseMut.mutate() : reqPausePartMut.mutate()}>
-              {(ch.is_owner ? requestPauseMut.isPending : reqPausePartMut.isPending) ? "..." : "Отправить запрос"}
+              disabled={ch.is_owner || ch.is_child ? (ch.is_child ? reqPausePartMut.isPending : requestPauseMut.isPending) : reqPausePartMut.isPending}
+              onClick={() => ch.is_child ? reqPausePartMut.mutate() : requestPauseMut.mutate()}>
+              {(ch.is_child ? reqPausePartMut.isPending : requestPauseMut.isPending) ? "..." : "Отправить запрос"}
             </button>
             <button className="btn btn-secondary" onClick={() => setShowPauseForm(false)}>
               Отмена
