@@ -142,7 +142,6 @@ async def get_my_challenges(
     db: AsyncSession = Depends(get_db),
 ) -> list[ChallengeOut]:
     user_id = tg_user["id"]
-    # Все челленджи пользователя: свои (parent_id=None) + дочерние (участие в чужих)
     res = await db.execute(
         select(Challenge).where(Challenge.user_id == user_id, Challenge.is_active == True)
         .order_by(Challenge.created_at.desc())
@@ -179,7 +178,7 @@ async def get_club_challenges(
         select(Challenge).where(
             Challenge.is_public == True,
             Challenge.is_active == True,
-            Challenge.parent_id.is_(None),  # только корневые
+            Challenge.parent_id.is_(None),
         )
         .order_by(Challenge.created_at.desc()).offset(page * page_size).limit(page_size)
     )
@@ -282,40 +281,21 @@ async def join_challenge(
         return OkResponse(ok=False, reason="Челлендж закрыт для присоединения.")
     if ch.user_id == user_id:
         return OkResponse(ok=False, reason="Это твой собственный челлендж.")
-    # Проверяем: дочерний уже есть?
     exist = await db.execute(
-        select(Challenge).where(
-            Challenge.parent_id == challenge_id,
-            Challenge.user_id == user_id,
-        )
+        select(Challenge).where(Challenge.parent_id == challenge_id, Challenge.user_id == user_id)
     )
     if exist.scalar_one_or_none():
         return OkResponse(ok=False, reason="Ты уже участвуешь в этом челлендже.")
-
-    # Создаём дочерний Challenge
     now = datetime.now()
-    child_deadline = None
-    if ch.deadline and ch.started_at:
-        duration = ch.deadline - ch.started_at
-        child_deadline = now + duration
-
-    child = Challenge(
-        user_id=user_id,
-        title=ch.title,
-        ch_type=ch.ch_type,
-        min_per_run=ch.min_per_run or 0.0,
-        min_minutes_per_run=ch.min_minutes_per_run or 0,
-        goal_runs=ch.goal_runs or 0,
-        goal_value=ch.goal_value or 0.0,
-        goal_time=ch.goal_time,
-        penalty=body.penalty,
-        is_public=False,
-        is_active=True,
-        started_at=now,
-        deadline=child_deadline,
-        parent_id=challenge_id,
-    )
-    db.add(child)
+    child_deadline = (now + (ch.deadline - ch.started_at)) if ch.deadline and ch.started_at else None
+    db.add(Challenge(
+        user_id=user_id, title=ch.title, ch_type=ch.ch_type,
+        min_per_run=ch.min_per_run or 0.0, min_minutes_per_run=ch.min_minutes_per_run or 0,
+        goal_runs=ch.goal_runs or 0, goal_value=ch.goal_value or 0.0,
+        goal_time=ch.goal_time, penalty=body.penalty,
+        is_public=False, is_active=True,
+        started_at=now, deadline=child_deadline, parent_id=challenge_id,
+    ))
     await db.commit()
     return OkResponse(ok=True, reason=f"Ты присоединился к «{ch.title}»!")
 

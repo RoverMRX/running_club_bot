@@ -624,7 +624,6 @@ class ChallengeRequestStates(StatesGroup):
 async def cmd_my_challenges(message: Message) -> None:
     user_id = message.from_user.id
     async with async_session() as session:
-        # Все челленджи пользователя: свои (parent_id=None) + дочерние (parent_id NOT NULL)
         res = await session.execute(
             _sa_select(Challenge).where(
                 Challenge.user_id == user_id,
@@ -697,7 +696,7 @@ async def cb_my_open(call: CallbackQuery) -> None:
     builder = InlineKeyboardBuilder()
 
     is_owner = (ch.user_id == call.from_user.id) and ch.parent_id is None
-    is_child  = ch.parent_id is not None  # дочерний — участие в чужом
+    is_child  = ch.parent_id is not None
     is_paused = bool(ch.pause_until and ch.pause_until > _dt.now())
 
     if ch.is_active:
