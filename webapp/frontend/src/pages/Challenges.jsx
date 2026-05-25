@@ -257,6 +257,22 @@ function ChallengeDetail({ id, onBack }) {
                 {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
               </button>
             )}
+            {ch.is_owner && ch.is_active && !ch.result && (
+              <button className="btn btn-danger" style={{ fontSize: 13 }}
+                onClick={() => {
+                  setShowSurrender(true);
+                  setSurrenderCountdown(10);
+                  if (surrenderTimer.current) clearInterval(surrenderTimer.current);
+                  surrenderTimer.current = setInterval(() => {
+                    setSurrenderCountdown(v => {
+                      if (v <= 1) { clearInterval(surrenderTimer.current); return 0; }
+                      return v - 1;
+                    });
+                  }, 1000);
+                }}>
+                🏳️ Сдаться
+              </button>
+            )}
             {ch.is_child && ch.is_active && !ch.result && (() => {
               // Дочерний челлендж — кнопки участника (новая архитектура)
               return (
@@ -331,9 +347,9 @@ function ChallengeDetail({ id, onBack }) {
           </div>
           <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
             Результат будет зафиксирован как не выполнен.
-            {ch.participants.find(p => p.user_id === ch.viewer_id)?.penalty && (
+            {ch.penalty && (
               <span style={{ color: "var(--warning)" }}>
-                {" "}Ставка: {ch.participants.find(p => p.user_id === ch.viewer_id)?.penalty}
+                {" "}Ставка: {ch.penalty}
               </span>
             )}
           </div>

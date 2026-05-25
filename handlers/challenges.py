@@ -534,11 +534,13 @@ def _build_challenge_card_text(ch, author_name: str, participants: list[dict]) -
     return "\n".join(lines)
 
 
-def _build_my_card_text(ch, all_participants: list[dict]) -> str:
+def _build_my_card_text(ch, all_participants: list[dict], is_child: bool = False, parent_author: str = "") -> str:
     lines = [
         f"<b>{ch.title}</b>",
         f"{_ch_label(ch)} · {_ch_goal_str(ch)}",
     ]
+    if is_child:
+        lines.append(f"🤝 Участие · Автор: {parent_author}")
     if ch.penalty:
         lines.append(f"💰 Твоя ставка: {ch.penalty}")
     lines.append("")
@@ -673,13 +675,22 @@ async def cb_my_open(call: CallbackQuery) -> None:
     parts = call.data.split(":")
     challenge_id, page = int(parts[1]), int(parts[2])
 
-    ch, _ = await _get_challenge_with_author(challenge_id)
+    ch, author_name = await _get_challenge_with_author(challenge_id)
     if not ch:
         await call.answer("Челлендж не найден.", show_alert=True)
         return
 
-    participants = await _get_participants_info(challenge_id)
-    text = _build_my_card_text(ch, participants)
+    if ch.parent_id is not None:
+        # Дочерний: показываем автора родительского и прогресс дочернего
+        async with async_session() as _s:
+            pr = await _s.execute(_sa_select(Challenge, User).join(User, User.tg_id == Challenge.user_id).where(Challenge.id == ch.parent_id))
+            prow = pr.one_or_none()
+        parent_author = (f"@{prow[1].username}" if prow and prow[1].username else (prow[1].school_nick if prow else "?")) if prow else "?"
+        participants = await _get_participants_info(ch.parent_id)
+        text = _build_my_card_text(ch, participants, is_child=True, parent_author=parent_author)
+    else:
+        participants = await _get_participants_info(challenge_id)
+        text = _build_my_card_text(ch, participants)
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     from datetime import datetime as _dt
@@ -706,6 +717,10 @@ async def cb_my_open(call: CallbackQuery) -> None:
                                callback_data=f"bot_req_pause:{ch.id}:{page}")
             else:
                 builder.button(text="⏳ Пауза на рассмотрении", callback_data="noop")
+
+            # Автор тоже может сдаться (зафиксировать провал)
+            builder.button(text="🏳️ Сдаться",
+                           callback_data=f"ch_surrender_ask:{ch.id}:{page}")
 
         elif is_child:
             # Кнопки для участника (дочерний челлендж)
@@ -966,26 +981,41 @@ async def cb_surrender_ask(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("ch_surrender_confirm:"))
 async def cb_surrender_confirm(call: CallbackQuery) -> None:
-    """Подтверждение сдачи участника."""
+    """Подтверждение сдачи — работает для автора и для участника (старая схема)."""
     parts = call.data.split(":")
     challenge_id, page = int(parts[1]), int(parts[2])
     user_id = call.from_user.id
 
     async with async_session() as session:
-        from models import ChallengeParticipant as _CP
-        p_res = await session.execute(
-            select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == user_id)
-        )
-        part = p_res.scalar_one_or_none()
-        if not part or part.result:
-            await call.answer("Участие уже завершено.", show_alert=True)
-            return
         ch_res = await session.execute(select(Challenge).where(Challenge.id == challenge_id))
         ch = ch_res.scalar_one_or_none()
-        part.result = "failed"
-        title = ch.title if ch else "Челлендж"
-        penalty = part.penalty
-        await session.commit()
+        if not ch:
+            await call.answer("Челлендж не найден.", show_alert=True)
+            return
+        if ch.result:
+            await call.answer("Участие уже завершено.", show_alert=True)
+            return
+        # Автор корневого — сдаётся сам
+        if ch.user_id == user_id and ch.parent_id is None:
+            ch.result = "failed"
+            ch.is_active = False
+            title = ch.title
+            penalty = ch.penalty
+            await session.commit()
+        else:
+            # Старая схема — через ChallengeParticipant (совместимость)
+            from models import ChallengeParticipant as _CP
+            p_res = await session.execute(
+                select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == user_id)
+            )
+            part = p_res.scalar_one_or_none()
+            if not part or part.result:
+                await call.answer("Участие не найдено или уже завершено.", show_alert=True)
+                return
+            part.result = "failed"
+            title = ch.title if ch else "Челлендж"
+            penalty = part.penalty
+            await session.commit()
 
     # Публикуем в группу
     from sqlalchemy import select as _sel

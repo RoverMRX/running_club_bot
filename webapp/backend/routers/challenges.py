@@ -62,18 +62,22 @@ async def _notify_admins(text: str, kb=None, db: AsyncSession = None) -> None:
 
 
 async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | None = None) -> ChallengeOut:
-    author_res = await db.execute(select(User).where(User.tg_id == ch.user_id))
+    # Для дочернего показываем автора РОДИТЕЛЬСКОГО челленджа, а не участника
+    if ch.parent_id is not None:
+        parent_res = await db.execute(select(Challenge).where(Challenge.id == ch.parent_id))
+        parent_ch  = parent_res.scalar_one_or_none()
+        author_id  = parent_ch.user_id if parent_ch else ch.user_id
+    else:
+        author_id = ch.user_id
+    author_res = await db.execute(select(User).where(User.tg_id == author_id))
     author = author_res.scalar_one_or_none()
 
-    # Для родительского — список дочерних (участников)
-    # Для дочернего — пусто (у него нет своих участников)
     participants = []
     is_participant = False
     my_current_value = 0.0
     my_current_runs  = 0
 
     if ch.parent_id is None:
-        # Это родительский: ищем дочерние
         children_res = await db.execute(
             select(Challenge, User)
             .join(User, User.tg_id == Challenge.user_id)
@@ -414,13 +418,16 @@ async def surrender_challenge(
     if not ch.is_active:
         return OkResponse(ok=False, reason="Челлендж уже завершён.")
 
-    # Поддержка обеих архитектур:
-    # - если challenge_id — это дочерний (parent_id NOT NULL, user_id=я)
-    # - или ищем дочерний через parent_id
+    # Три случая:
+    # 1) ch — сам дочерний (участник открыл свой child_id напрямую)
+    # 2) ch — родительский, ищем дочерний пользователя
+    # 3) ch — родительский И user_id == автор → автор сдаётся = закрывает свой же челлендж
+
     if ch.user_id == user_id and ch.parent_id is not None:
-        # Передан сразу child_id
+        # Случай 1: передан child_id
         child = ch
     else:
+        # Ищем дочерний
         child_res = await db.execute(
             select(Challenge).where(
                 Challenge.parent_id == challenge_id,
@@ -428,6 +435,10 @@ async def surrender_challenge(
             )
         )
         child = child_res.scalar_one_or_none()
+
+    # Случай 3: автор корневого сдаётся (нет дочернего — он сам хозяин)
+    if not child and ch.user_id == user_id and ch.parent_id is None:
+        child = ch
 
     if not child:
         return OkResponse(ok=False, reason="Ты не участник этого челленджа.")
@@ -438,27 +449,23 @@ async def surrender_challenge(
     child.is_active = False
     await db.commit()
 
-    # Публикуем в группу
+    # Публикуем в группу через pending_notifications → бот отправит в болталку
     nick_res = await db.execute(select(User.school_nick, User.username).where(User.tg_id == user_id))
     u_row = nick_res.one_or_none()
     name = f"@{u_row[1]}" if u_row and u_row[1] else (u_row[0] if u_row else str(user_id))
     penalty_str = f" 💰 Ставка: {child.penalty}" if child.penalty else ""
     try:
-        from notify import queue_message as _qm
-        import config as _cfg
-        if _cfg.DIGEST_THREAD_ID and _cfg.GROUP_ID:
-            # Сообщение в болталку через pending_notifications
-            # GROUP_ID используем как user_id — бот сам опубликует в нужный топик
-            import json as _json
-            from models import PendingNotification
+        import json as _json, config as _cfg
+        from models import PendingNotification
+        if _cfg.GROUP_ID:
             db.add(PendingNotification(
                 user_tg_id=_cfg.GROUP_ID,
                 text=f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}",
-                kb_json=_json.dumps({"thread_id": _cfg.DIGEST_THREAD_ID}),
+                kb_json=_json.dumps({"thread_id": _cfg.DIGEST_THREAD_ID}) if _cfg.DIGEST_THREAD_ID else None,
             ))
             await db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        import logging; logging.getLogger("challenges").warning("surrender notify: %s", e)
 
     return OkResponse(ok=True, reason="Ты вышел из челленджа. Результат зафиксирован как не выполнен.")
 
