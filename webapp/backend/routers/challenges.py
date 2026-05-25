@@ -14,6 +14,10 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from models import Challenge, ChallengeParticipant, User
 
+class PauseRequest(BaseModel):
+    reason: str = ""
+
+
 router = APIRouter(prefix="/challenges", tags=["challenges"])
 
 _SPRINT_DAYS = {"daily_km": 1, "weekly_km": 7, "monthly_km": 30}
@@ -517,9 +521,6 @@ async def request_pause_participation(
 
 
 # ─── Запрос на паузу (автор → уведомление admin) ───────────
-
-class PauseRequest(BaseModel):
-    reason: str = ""
 
 
 @router.post("/{challenge_id}/request-pause", response_model=OkResponse)

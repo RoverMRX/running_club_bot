@@ -416,4 +416,28 @@ async def finalize_tournament(tournament_id: int, bot=None) -> dict:
             except Exception as e:
                 log.warning("Не удалось уведомить участника %s о завершении турнира: %s", uid, e)
 
+    # Публикуем итоги в болталку
+    if bot and placements:
+        from services.scheduler import _post_to_digest
+        medals_map = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines = [f"🏆 <b>Турнир «{tour_title}» завершён!</b>\n"]
+        for row in placements[:3]:
+            pos = row["position"]
+            score = row["score"]
+            user = row["user"]
+            name = (f"@{user.username}" if user and user.username
+                    else (user.school_nick if user else str(row["user_tg_id"])))
+            if tour_type in ("km", "team_km"):
+                s = f"{score:.1f} км"
+            elif tour_type == "minutes":
+                s = f"{int(score)} мин"
+            else:
+                s = f"{int(score)} дн"
+            medal = medals_map.get(pos, f"{pos}.")
+            lines.append(f"{medal} {name} — {s}")
+        try:
+            await _post_to_digest(bot, "\n".join(lines))
+        except Exception as e:
+            log.warning("Не удалось опубликовать итоги турнира: %s", e)
+
     return result
