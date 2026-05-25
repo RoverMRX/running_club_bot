@@ -68,6 +68,8 @@ class ChallengeOut(BaseModel):
     my_current_value:    float = 0.0         # прогресс текущего юзера (участника)
     my_current_runs:     int   = 0
     viewer_id:           int | None = None    # tg_id смотрящего
+    parent_id:           int | None = None    # есть → это дочерний (участие в чужом)
+    is_child:            bool = False         # True если это копия чужого челленджа
     participants:        list[ChallengeParticipantOut] = []
 
     class Config:
@@ -81,14 +83,15 @@ class JoinChallengeRequest(BaseModel):
 # ─── Отчёты ──────────────────────────────────────────────────
 
 class ReportOut(BaseModel):
-    id:          int
-    user_tg_id:  int
-    username:    str | None
-    school_nick: str
-    km:          float
-    is_approved: bool
-    is_rejected: bool
-    created_at:  datetime
+    id:           int
+    user_tg_id:   int
+    username:     str | None
+    school_nick:  str
+    km:           float
+    duration_sec: int | None = None   # время в секундах (для race)
+    is_approved:  bool
+    is_rejected:  bool
+    created_at:   datetime
 
     class Config:
         from_attributes = True

@@ -44,7 +44,7 @@ api.interceptors.request.use((config) => {
 
 // ─── Профиль ─────────────────────────────────────────────────
 export const getProfile       = () => api.get("/profile").then(r => r.data);
-export const getLeaderboard   = () => api.get("/profile/leaderboard").then(r => r.data);
+export const getLeaderboard   = (period="alltime", sort_by="xp") => api.get("/profile/leaderboard", { params: { period, sort_by } }).then(r => r.data);
 
 // ─── Челленджи ───────────────────────────────────────────────
 export const getMyChallenges        = () => api.get("/challenges/my").then(r => r.data);

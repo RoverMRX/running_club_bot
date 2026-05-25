@@ -1,11 +1,21 @@
 """
 services/challenges.py — бизнес-логика челленджей.
 
-Типы челленджей (ch_type):
-  weekly_runs  — регулярный: N пробежек/неделю, условие зачёта км и/или минуты
-  daily_km     — дневной спринт: N км за один день  (deadline = старт + 1 день)
-  weekly_km    — недельный спринт: N км за неделю   (deadline = старт + 7 дней)
-  monthly_km   — месячный спринт: N км за месяц     (deadline = старт + 30 дней)
+Архитектура (после рефакторинга):
+  - Автор создаёт челлендж (parent_id=None, is_public=True)
+  - Участник присоединяется → создаётся дочерний Challenge
+    (parent_id=родительский_id, is_public=False, user_id=участник)
+  - В клубе показываются только parent_id IS NULL AND is_public=True
+  - В "Мои" — собственные (parent_id IS NULL, user_id=я)
+                + дочерние (parent_id NOT NULL, user_id=я)
+  - Прогресс каждого участника — в его дочернем челлендже
+  - Завершение независимо
+
+Типы:
+  weekly_runs  — регулярный: N пробежек/неделю
+  daily_km     — дневной спринт: N км за день
+  weekly_km    — недельный спринт: N км за неделю
+  monthly_km   — месячный спринт: N км за месяц
   race         — разовый забег: N км за время T
 """
 
@@ -37,15 +47,10 @@ _SPRINT_DAYS = {
 
 
 def get_type_name(ch_type: str) -> str:
-    """Человекочитаемое название типа челленджа."""
     return CH_TYPE_NAMES.get(ch_type, ch_type)
 
 
 def _calc_deadline(ch_type: str, started_at: datetime) -> datetime | None:
-    """
-    Автоматически рассчитывает deadline для спринтов.
-    Для остальных типов возвращает None (deadline задаётся вручную или отсутствует).
-    """
     days = _SPRINT_DAYS.get(ch_type)
     if days is not None:
         return started_at + timedelta(days=days)
@@ -66,19 +71,9 @@ async def create_challenge(
     is_public: bool = True,
     started_at: datetime | None = None,
     deadline: datetime | None = None,
+    parent_id: int | None = None,
 ) -> Challenge:
-    """
-    Создаёт челлендж.
-
-    Для спринтов (daily_km, weekly_km, monthly_km) deadline вычисляется
-    автоматически от started_at и переданное значение deadline игнорируется.
-
-    Returns:
-        Созданный Challenge (отсоединённый от сессии).
-    """
     started_at = started_at or datetime.now()
-
-    # Для спринтов всегда считаем deadline сами, игнорируем переданный
     auto_deadline = _calc_deadline(ch_type, started_at)
     if auto_deadline is not None:
         deadline = auto_deadline
@@ -99,17 +94,16 @@ async def create_challenge(
                 is_active=True,
                 started_at=started_at,
                 deadline=deadline,
+                parent_id=parent_id,
             )
             session.add(ch)
             await session.flush()
             ch_id = ch.id
 
-    # Возвращаем свежезагруженный объект
     return await get_challenge(ch_id)
 
 
 async def get_challenge(challenge_id: int) -> Challenge | None:
-    """Получить челлендж по ID."""
     async with async_session() as session:
         res = await session.execute(
             select(Challenge).where(Challenge.id == challenge_id)
@@ -119,61 +113,57 @@ async def get_challenge(challenge_id: int) -> Challenge | None:
 
 async def get_user_challenges(user_id: int, active_only: bool = True) -> dict:
     """
-    Челленджи пользователя — свои и те, к которым присоединился.
-
-    Returns:
-        {'own': [Challenge, ...], 'joined': [Challenge, ...]}
+    Возвращает {'own': [...], 'joined': [...]}
+    own   — родительские челленджи пользователя (parent_id IS NULL)
+    joined — дочерние (parent_id NOT NULL, т.е. копии чужих)
     """
     async with async_session() as session:
-        # Свои
-        q = select(Challenge).where(Challenge.user_id == user_id)
+        # Свои (корневые)
+        q = select(Challenge).where(
+            Challenge.user_id == user_id,
+            Challenge.parent_id.is_(None),
+        )
         if active_only:
             q = q.where(Challenge.is_active == True)
         own_res = await session.execute(q)
-        own = own_res.scalars().all()
+        own = list(own_res.scalars().all())
 
-        # Присоединённые
-        joined_res = await session.execute(
-            select(ChallengeParticipant).where(
-                ChallengeParticipant.user_id == user_id
-            )
+        # Дочерние (участие в чужих)
+        q2 = select(Challenge).where(
+            Challenge.user_id == user_id,
+            Challenge.parent_id.isnot(None),
         )
-        joined = []
-        for part in joined_res.scalars().all():
-            ch = part.challenge
-            if ch and (not active_only or ch.is_active):
-                joined.append(ch)
+        if active_only:
+            q2 = q2.where(Challenge.is_active == True)
+        joined_res = await session.execute(q2)
+        joined = list(joined_res.scalars().all())
 
-        return {'own': list(own), 'joined': joined}
+    return {'own': own, 'joined': joined}
 
 
 async def get_public_challenges(exclude_user: int | None = None, limit: int = 20) -> list[Challenge]:
-    """Список публичных активных челленджей (для присоединения)."""
+    """Список публичных активных корневых челленджей (для присоединения)."""
     async with async_session() as session:
         q = select(Challenge).where(
             Challenge.is_active == True,
             Challenge.is_public == True,
+            Challenge.parent_id.is_(None),   # только родительские
         )
         if exclude_user is not None:
             q = q.where(Challenge.user_id != exclude_user)
         q = q.order_by(Challenge.created_at.desc()).limit(limit)
-
         res = await session.execute(q)
         return list(res.scalars().all())
 
 
 async def join_challenge(challenge_id: int, user_id: int, penalty: str | None = None) -> dict:
     """
-    Присоединить пользователя к чужому челленджу.
-
-    Args:
-        penalty: личная ставка участника (опционально)
-    Returns:
-        {'ok': bool, 'reason': str}
+    Присоединить пользователя к чужому челленджу:
+    создаёт дочерний Challenge (parent_id=challenge_id, is_public=False).
     """
     async with async_session() as session:
         async with session.begin():
-            # Проверяем челлендж
+            # Проверяем родительский челлендж
             ch_res = await session.execute(
                 select(Challenge).where(Challenge.id == challenge_id)
             )
@@ -181,89 +171,112 @@ async def join_challenge(challenge_id: int, user_id: int, penalty: str | None = 
 
             if not ch or not ch.is_active:
                 return {'ok': False, 'reason': 'Челлендж не найден или завершён.'}
-            if not ch.is_public:
+            if not ch.is_public or ch.parent_id is not None:
                 return {'ok': False, 'reason': 'Челлендж закрыт для присоединения.'}
             if ch.user_id == user_id:
                 return {'ok': False, 'reason': 'Это твой собственный челлендж.'}
 
-            # Уже участвует?
+            # Уже участвует? (дочерний с таким parent_id уже есть)
             exist_res = await session.execute(
-                select(ChallengeParticipant).where(
-                    ChallengeParticipant.challenge_id == challenge_id,
-                    ChallengeParticipant.user_id == user_id,
+                select(Challenge).where(
+                    Challenge.parent_id == challenge_id,
+                    Challenge.user_id == user_id,
                 )
             )
             if exist_res.scalar_one_or_none():
                 return {'ok': False, 'reason': 'Ты уже участвуешь в этом челлендже.'}
 
-            # Добавляем
-            try:
-                session.add(ChallengeParticipant(
-                    challenge_id=challenge_id,
-                    user_id=user_id,
-                    penalty=penalty,
-                ))
-                await session.flush()
-            except IntegrityError:
-                await session.rollback()
-                return {'ok': False, 'reason': 'Не удалось присоединиться.'}
+            # Рассчитываем дедлайн дочернего — длительность от сегодня
+            now = datetime.now()
+            child_deadline = None
+            if ch.deadline and ch.started_at:
+                duration = ch.deadline - ch.started_at
+                child_deadline = now + duration
 
-            return {'ok': True, 'reason': f'Ты присоединился к «{ch.title}»!'}
+            child = Challenge(
+                user_id=user_id,
+                title=ch.title,
+                ch_type=ch.ch_type,
+                min_per_run=ch.min_per_run or 0.0,
+                min_minutes_per_run=ch.min_minutes_per_run or 0,
+                goal_runs=ch.goal_runs or 0,
+                goal_value=ch.goal_value or 0.0,
+                goal_time=ch.goal_time,
+                penalty=penalty,
+                is_public=False,
+                is_active=True,
+                started_at=now,
+                deadline=child_deadline,
+                parent_id=challenge_id,
+            )
+            session.add(child)
+            await session.flush()
+
+    return {'ok': True, 'reason': f'Ты присоединился к «{ch.title}»!'}
 
 
 async def leave_challenge(challenge_id: int, user_id: int) -> bool:
-    """Выйти из чужого челленджа."""
+    """
+    Покинуть чужой челлендж — деактивируем дочерний.
+    Поддерживает как parent_id=challenge_id (новая архитектура),
+    так и ChallengeParticipant (старая, для совместимости).
+    """
     async with async_session() as session:
         async with session.begin():
+            # Новая архитектура: дочерний челлендж
             res = await session.execute(
+                select(Challenge).where(
+                    Challenge.parent_id == challenge_id,
+                    Challenge.user_id == user_id,
+                    Challenge.is_active == True,
+                )
+            )
+            child = res.scalar_one_or_none()
+            if child:
+                child.is_active = False
+                child.result = "closed"
+                return True
+
+            # Старая архитектура: ChallengeParticipant
+            res2 = await session.execute(
                 select(ChallengeParticipant).where(
                     ChallengeParticipant.challenge_id == challenge_id,
                     ChallengeParticipant.user_id == user_id,
                 )
             )
-            part = res.scalar_one_or_none()
-            if not part:
-                return False
-            await session.delete(part)
-            return True
-
-
-def is_run_counts(challenge: Challenge, km: float, minutes: int | None) -> bool:
-    """
-    Проверяет, засчитывается ли пробежка по условиям челленджа.
-
-    ИЛИ-логика: если заданы оба условия (км и минуты), пробежка
-    засчитывается при выполнении ЛЮБОГО из них. Условия дополняют
-    друг друга (быстрый интервал засчитается по минутам, медленный
-    длинный кросс — по км), а не дублируют.
-
-    Если не задано ни одного условия — засчитывается любая пробежка.
-    """
-    has_km_req      = challenge.min_per_run > 0
-    has_minutes_req = challenge.min_minutes_per_run > 0
-
-    # Нет условий вообще — засчитываем любую пробежку
-    if not has_km_req and not has_minutes_req:
-        return True
-
-    # Выполнено условие по километрам
-    if has_km_req and km >= challenge.min_per_run:
-        return True
-
-    # Выполнено условие по минутам
-    if has_minutes_req and minutes is not None and minutes >= challenge.min_minutes_per_run:
-        return True
+            part = res2.scalar_one_or_none()
+            if part:
+                await session.delete(part)
+                return True
 
     return False
 
 
-async def update_on_report(user_id: int, km: float, minutes: int | None = None) -> dict:
+def is_run_counts(challenge: Challenge, km: float, minutes: int | None) -> bool:
     """
-    Обновляет прогресс всех активных челленджей пользователя по новому отчёту.
-    Вызывается после одобрения отчёта.
+    Проверяет засчитываемость пробежки. ИЛИ-логика между км и минутами.
+    """
+    has_km_req      = challenge.min_per_run > 0
+    has_minutes_req = challenge.min_minutes_per_run > 0
 
-    Returns:
-        {'updated': [названия челленджей], 'completed': [названия завершённых]}
+    if not has_km_req and not has_minutes_req:
+        return True
+    if has_km_req and km >= challenge.min_per_run:
+        return True
+    if has_minutes_req and minutes is not None and minutes >= challenge.min_minutes_per_run:
+        return True
+    return False
+
+
+async def update_on_report(
+    user_id: int,
+    km: float,
+    minutes: int | None = None,
+    duration_sec: int | None = None,
+) -> dict:
+    """
+    Обновляет прогресс всех активных челленджей пользователя.
+    Для race-челленджей дополнительно проверяет duration_sec vs goal_time.
     """
     updated = []
     completed = []
@@ -272,15 +285,13 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
         async with session.begin():
             now = datetime.now()
 
-            # Собственные челленджи
-            own_res = await session.execute(
+            all_res = await session.execute(
                 select(Challenge).where(
                     Challenge.user_id == user_id,
                     Challenge.is_active == True,
                 )
             )
-            for ch in own_res.scalars().all():
-                # Пропускаем если на паузе
+            for ch in all_res.scalars().all():
                 if ch.pause_until and ch.pause_until > now:
                     continue
                 if not is_run_counts(ch, km, minutes):
@@ -290,61 +301,37 @@ async def update_on_report(user_id: int, km: float, minutes: int | None = None) 
                 ch.current_value += km
                 if minutes:
                     ch.current_time += minutes
-                updated.append(ch.title)
 
-                # Проверка завершения для целевых типов
-                if _is_goal_reached(ch):
+                label = ch.title if ch.parent_id is None else f"{ch.title} (участие)"
+                updated.append(label)
+
+                goal_reached = _is_goal_reached(ch)
+
+                # Для race-челленджа: учитываем время если задан goal_time
+                if ch.ch_type == "race" and ch.goal_time and duration_sec is not None:
+                    goal_sec = ch.goal_time * 60
+                    goal_reached = goal_reached and duration_sec <= goal_sec
+
+                if goal_reached:
                     ch.is_active = False
                     ch.result = "completed"
                     xp_bonus = _challenge_xp(ch)
                     if xp_bonus:
                         await _grant_participant_xp(user_id, xp_bonus)
-                    completed.append(ch.title)
-
-            # Присоединённые челленджи — явный JOIN чтобы избежать lazy load
-            joined_res = await session.execute(
-                select(ChallengeParticipant, Challenge)
-                .join(Challenge, Challenge.id == ChallengeParticipant.challenge_id)
-                .where(
-                    ChallengeParticipant.user_id == user_id,
-                    Challenge.is_active == True,
-                )
-            )
-            for part, ch in joined_res.all():
-                if ch.pause_until and ch.pause_until > now:
-                    continue
-                if not is_run_counts(ch, km, minutes):
-                    continue
-
-                part.current_runs += 1
-                part.current_value += km
-                if minutes:
-                    part.current_time += minutes
-                updated.append(f"{ch.title} (совместный)")
-
-                # Проверяем выполнение для участника
-                if _is_goal_reached_for_participant(ch, part):
-                    part.result = "completed"
-                    xp_bonus = _challenge_xp(ch)
-                    if xp_bonus:
-                        await _grant_participant_xp(part.user_id, xp_bonus)
-                    completed.append(f"{ch.title} (совместный)")
+                    completed.append(label)
 
     return {'updated': updated, 'completed': completed}
 
 
 def _is_goal_reached(ch: Challenge) -> bool:
-    """Проверяет, достигнута ли цель челленджа (для спринтов и забегов)."""
     if ch.ch_type in ("daily_km", "weekly_km", "monthly_km", "race"):
         return ch.current_value >= ch.goal_value > 0
     return False
 
 
 def _challenge_xp(ch) -> int:
-    """XP за выполнение челленджа в зависимости от длительности."""
     import config as _cfg
     if ch.ch_type == "weekly_runs":
-        # Бессрочный — XP за стрик выдаётся в дайджесте, здесь 0
         return 0
     if not ch.started_at or not ch.deadline:
         return _cfg.XP_CHALLENGE_WEEK
@@ -353,13 +340,12 @@ def _challenge_xp(ch) -> int:
         return _cfg.XP_CHALLENGE_DAY
     if duration <= 7:
         return _cfg.XP_CHALLENGE_WEEK
-    if duration <= 62:  # ~2 месяца
+    if duration <= 62:
         return _cfg.XP_CHALLENGE_MONTH
     return _cfg.XP_CHALLENGE_LONG
 
 
 async def _grant_participant_xp(user_id: int, xp: int) -> None:
-    """Начислить XP участнику за выполнение челленджа."""
     if xp <= 0:
         return
     async with async_session() as session:
@@ -374,17 +360,7 @@ async def _grant_participant_xp(user_id: int, xp: int) -> None:
                 user.level = user.xp // 100
 
 
-def _is_goal_reached_for_participant(ch, part) -> bool:
-    """Достигнута ли цель участника (его личный прогресс)."""
-    if part.result:  # уже есть результат
-        return False
-    if ch.ch_type in ("daily_km", "weekly_km", "monthly_km", "race"):
-        return (part.current_value or 0) >= (ch.goal_value or 0) > 0
-    return False
-
-
 async def pause_challenge(challenge_id: int, until: datetime) -> bool:
-    """Поставить челлендж на паузу до даты (форс-мажор, админ)."""
     async with async_session() as session:
         async with session.begin():
             res = await session.execute(
@@ -399,7 +375,6 @@ async def pause_challenge(challenge_id: int, until: datetime) -> bool:
 
 
 async def unfreeze_challenge(challenge_id: int) -> bool:
-    """Снять паузу, сдвинуть дедлайн на время заморозки."""
     async with async_session() as session:
         async with session.begin():
             res = await session.execute(
@@ -417,7 +392,6 @@ async def unfreeze_challenge(challenge_id: int) -> bool:
 
 
 async def close_challenge(challenge_id: int, result: str = "closed") -> bool:
-    """Завершить челлендж вручную (досрочно)."""
     async with async_session() as session:
         async with session.begin():
             res = await session.execute(
@@ -432,11 +406,24 @@ async def close_challenge(challenge_id: int, result: str = "closed") -> bool:
 
 
 async def get_participants_count(challenge_id: int) -> int:
-    """Сколько человек присоединилось к челленджу."""
+    """Сколько дочерних (активных) у родительского челленджа."""
     async with async_session() as session:
         res = await session.execute(
-            select(func.count(ChallengeParticipant.id)).where(
-                ChallengeParticipant.challenge_id == challenge_id
+            select(func.count(Challenge.id)).where(
+                Challenge.parent_id == challenge_id,
+                Challenge.is_active == True,
             )
         )
         return res.scalar() or 0
+
+
+async def get_child_challenge(parent_id: int, user_id: int) -> Challenge | None:
+    """Получить дочерний челлендж пользователя по parent_id."""
+    async with async_session() as session:
+        res = await session.execute(
+            select(Challenge).where(
+                Challenge.parent_id == parent_id,
+                Challenge.user_id == user_id,
+            )
+        )
+        return res.scalar_one_or_none()

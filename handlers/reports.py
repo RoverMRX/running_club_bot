@@ -18,6 +18,8 @@ from datetime import datetime
 
 from aiogram import Router, types, F, Bot
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
@@ -44,6 +46,69 @@ from services.reports import (
 
 router = Router()
 log = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FSM для ввода времени
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ReportTimeStates(StatesGroup):
+    enter_time = State()
+
+
+def parse_duration(text: str) -> int | None:
+    """
+    Парсит время пробежки → секунды.
+    Форматы:
+      55        → 55 мин → 3300 сек
+      1:10      → 70 мин → 4200 сек
+      1:10:30   → 70 мин 30 сек → 4230 сек
+      2ч10м54с  → 130 мин 54 сек → 7854 сек
+      2h10m54s  → то же самое
+    Возвращает None если не удалось распарсить.
+    """
+    import re
+    text = text.strip().lower()
+
+    # Формат «Nч Nм Nс» / «NhNmNs»
+    m = re.fullmatch(
+        r"(?:(\d+)\s*[чh])?\s*(?:(\d+)\s*[мm])?\s*(?:(\d+)\s*[сs])?",
+        text
+    )
+    if m and any(m.groups()):
+        h   = int(m.group(1) or 0)
+        mn  = int(m.group(2) or 0)
+        sec = int(m.group(3) or 0)
+        total = h * 3600 + mn * 60 + sec
+        return total if total > 0 else None
+
+    # Формат «ЧЧ:ММ:СС» или «ЧЧ:ММ» или «ММ»
+    parts = text.split(":")
+    try:
+        if len(parts) == 1:
+            mins = float(parts[0].replace(",", "."))
+            return int(mins * 60)
+        elif len(parts) == 2:
+            h, mn = int(parts[0]), int(parts[1])
+            return h * 3600 + mn * 60
+        elif len(parts) == 3:
+            h, mn, sec = int(parts[0]), int(parts[1]), int(parts[2])
+            return h * 3600 + mn * 60 + sec
+    except ValueError:
+        pass
+
+    return None
+
+
+def fmt_duration(seconds: int) -> str:
+    """Форматирует секунды в читаемую строку ЧЧ:ММ:СС или ММ:СС."""
+    h  = seconds // 3600
+    mn = (seconds % 3600) // 60
+    sc = seconds % 60
+    if h > 0:
+        return f"{h}:{mn:02d}:{sc:02d}"
+    return f"{mn}:{sc:02d}"
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -91,6 +156,10 @@ def _build_link_kb(
             if len(label) > 60:
                 label = label[:57] + "…"
             builder.button(text=label, callback_data=f"rep_ch:{report_id}:{ch.id}")
+
+    # ── Кнопка времени (для race) ──
+    if any(ch.ch_type == "race" for ch in challenges):
+        builder.button(text="⏱ Указать время", callback_data=f"rep_time:{report_id}")
 
     # ── Кнопка завершения ──
     builder.button(text="✔️ Готово", callback_data=f"rep_done:{report_id}")
@@ -830,10 +899,13 @@ async def _notify_athlete(bot: Bot, ap: dict) -> None:
             from config import XP_PR_BONUS
             xp_detail += f"\n  └ 🎯 Личный рекорд +{XP_PR_BONUS} XP"
 
+        # Время пробежки (если указано)
+        time_str = f"  ⏱ {fmt_duration(ap['duration_sec'])}" if ap.get('duration_sec') else ""
+
         await bot.send_message(
             ap['user_tg_id'],
             f"✅ <b>Отчёт принят!</b>\n\n"
-            f"📝 {ap['km']} км\n"
+            f"📝 {ap['km']} км{(' · ' + time_str) if time_str else ''}\n"
             f"💠 +{ap['xp']} XP\n"
             f"{xp_detail}"
             f"{pr_line}"
@@ -875,3 +947,76 @@ async def _notify_athlete_rejected(bot: Bot, report_id: int, rejected_by_id: int
         )
     except Exception as e:
         log.warning("Не удалось уведомить атлета %s об отклонении: %s", user_tg_id, e)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ввод времени (для race-челленджей)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("rep_time:"))
+async def cb_rep_time_start(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь нажал «⏱ Указать время» — запускаем FSM ввода."""
+    report_id = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        r_res = await session.execute(select(Report).where(Report.id == report_id))
+        report = r_res.scalar_one_or_none()
+
+    if not report or report.user_tg_id != callback.from_user.id:
+        return await callback.answer("Это не твой отчёт.")
+
+    await state.set_state(ReportTimeStates.enter_time)
+    await state.update_data(report_id=report_id)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Отмена", callback_data=f"rep_time_cancel:{report_id}")
+    kb.adjust(1)
+
+    await callback.message.answer(
+        "⏱ <b>Введи время пробежки</b>\n\n"
+        "Примеры форматов:\n"
+        "  <code>55</code>     → 55 минут\n"
+        "  <code>1:10</code>   → 1 час 10 мин\n"
+        "  <code>1:10:30</code> → 1 ч 10 мин 30 сек\n"
+        "  <code>2ч10м54с</code> → то же\n",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rep_time_cancel:"))
+async def cb_rep_time_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await callback.answer("Отменено.")
+
+
+@router.message(ReportTimeStates.enter_time)
+async def step_enter_time(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    report_id = data.get("report_id")
+
+    seconds = parse_duration(message.text or "")
+    if seconds is None or seconds <= 0:
+        await message.answer(
+            "⚠️ Не понял формат. Попробуй ещё раз:\n"
+            "<code>55</code> · <code>1:10</code> · <code>1:10:30</code> · <code>2ч10м</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Сохраняем в БД
+    async with async_session() as session:
+        r = await session.get(Report, report_id)
+        if r and r.user_tg_id == message.from_user.id:
+            r.duration_sec = seconds
+            # duration_min обновляем тоже для совместимости
+            r.duration_min = seconds // 60
+            await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Время сохранено: <b>{fmt_duration(seconds)}</b>",
+        parse_mode="HTML",
+    )

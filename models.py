@@ -80,6 +80,7 @@ class Challenge(Base):
     penalty       = Column(Text,    nullable=True)
     is_public     = Column(Boolean, default=True)
     is_active     = Column(Boolean, default=True)
+    parent_id     = Column(Integer, ForeignKey("challenges.id"), nullable=True)  # дочерний = копия для участника
 
     started_at    = Column(DateTime, nullable=True)
     deadline      = Column(DateTime, nullable=True)
@@ -94,6 +95,8 @@ class Challenge(Base):
 
     owner        = relationship("User",                 back_populates="challenges")
     participants = relationship("ChallengeParticipant", back_populates="challenge", lazy="selectin")
+    children     = relationship("Challenge", foreign_keys="Challenge.parent_id", lazy="selectin")
+    parent       = relationship("Challenge", foreign_keys="Challenge.parent_id", back_populates="children", remote_side="Challenge.id")
 
 
 class ChallengeParticipant(Base):
@@ -136,6 +139,7 @@ class Report(Base):
     user_tg_id   = Column(BigInteger, ForeignKey("users.tg_id"), nullable=False)
     km           = Column(Float,   nullable=False)
     duration_min = Column(Integer, nullable=True)
+    duration_sec = Column(Integer, nullable=True)   # опциональное время в секундах (для race)
 
     report_type   = Column(String,  default="training")
     event_id      = Column(Integer, ForeignKey("events.id"),             nullable=True)

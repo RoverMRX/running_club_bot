@@ -92,32 +92,21 @@ async def detect_matching_challenges(
     minutes: int | None = None,
 ) -> list[Challenge]:
     """
-    Возвращает активные челленджи пользователя (свои + присоединённые),
+    Возвращает активные челленджи пользователя (свои + дочерние),
     которым подходит данная пробежка по условиям is_run_counts.
+    Новая архитектура: ищем все Challenge где user_id=user_id и is_active=True.
     """
     now = datetime.now()
     matching: list[Challenge] = []
 
     async with async_session() as session:
-        own_res = await session.execute(
+        all_res = await session.execute(
             select(Challenge).where(
                 Challenge.user_id == user_id,
                 Challenge.is_active == True,
             )
         )
-        own_challenges = list(own_res.scalars().all())
-
-        joined_res = await session.execute(
-            select(Challenge)
-            .join(ChallengeParticipant, ChallengeParticipant.challenge_id == Challenge.id)
-            .where(
-                ChallengeParticipant.user_id == user_id,
-                Challenge.is_active == True,
-            )
-        )
-        joined_challenges = list(joined_res.scalars().all())
-
-        for ch in own_challenges + joined_challenges:
+        for ch in all_res.scalars().all():
             if ch.pause_until and ch.pause_until > now:
                 continue
             if is_run_counts(ch, km, minutes):
@@ -335,6 +324,7 @@ async def approve_report(report_id: int) -> dict:
             user_tg_id    = report.user_tg_id
             km            = report.km
             duration_min  = report.duration_min
+            duration_sec  = getattr(report, "duration_sec", None)
             tournament_id = report.tournament_id
             await session.flush()
 
@@ -342,6 +332,7 @@ async def approve_report(report_id: int) -> dict:
         user_id=user_tg_id,
         km=km,
         minutes=duration_min,
+        duration_sec=duration_sec,
     )
 
     # Обновляем очки турнира если отчёт к нему привязан
@@ -356,6 +347,7 @@ async def approve_report(report_id: int) -> dict:
         'km': km,
         'xp': total_xp,
         'is_pr': is_pr,
+        'duration_sec': duration_sec,
         'updated': challenge_result['updated'],
         'completed': challenge_result['completed'],
         'tournament_id': tournament_id,

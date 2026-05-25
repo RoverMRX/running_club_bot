@@ -49,6 +49,11 @@ function goalStr(ch) {
 }
 
 function progressValue(ch) {
+  // Дочерний: прогресс хранится прямо в ch.current_*
+  if (ch.is_child) {
+    return ch.ch_type === "weekly_runs" ? ch.current_runs : ch.current_value;
+  }
+  // Участник в чужом (старая схема / club view)
   if (ch.is_participant && !ch.is_owner) {
     return ch.ch_type === "weekly_runs" ? ch.my_current_runs : ch.my_current_value;
   }
@@ -62,6 +67,10 @@ function progressPct(ch) {
   return max > 0 ? Math.min(100, Math.round(progressValue(ch) / max * 100)) : 0;
 }
 function progressLabel(ch) {
+  if (ch.is_child) {
+    if (ch.ch_type === "weekly_runs") return `${ch.current_runs} / ${ch.goal_runs} пробежек`;
+    return `${ch.current_value.toFixed(1)} / ${ch.goal_value.toFixed(1)} км`;
+  }
   if (ch.is_participant && !ch.is_owner) {
     if (ch.ch_type === "weekly_runs") {
       return `${ch.my_current_runs} / ${ch.goal_runs} пробежек`;
@@ -160,7 +169,10 @@ function ChallengeDetail({ id, onBack }) {
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
           <h2 style={{ margin: 0, flex: 1 }}>{ch.title}</h2>
-          <span className="badge">{TYPE_LABELS[ch.ch_type]}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+            <span className="badge">{TYPE_LABELS[ch.ch_type]}</span>
+            {ch.is_child && <span className="badge" style={{ background: "var(--success)", fontSize: 11 }}>🤝 участие</span>}
+          </div>
         </div>
 
         <div className="hint" style={{ fontSize: 13, marginBottom: 4 }}>{goalStr(ch)}</div>
@@ -243,16 +255,11 @@ function ChallengeDetail({ id, onBack }) {
                 {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
               </button>
             )}
-            {ch.is_participant && !ch.is_owner && (() => {
-              const myPart = ch.participants.find(p => p.user_id === ch.viewer_id);
-              const myResult = myPart?.result;
-              const myCloseReq = myPart?.close_requested;
-              const myPauseReq = myPart?.pause_requested;
-              if (myResult) return null; // уже завершено
+            {ch.is_child && ch.is_active && !ch.result && (() => {
+              // Дочерний челлендж — кнопки участника (новая архитектура)
               return (
                 <>
-                  {/* Запрос завершения участия */}
-                  {!myCloseReq ? (
+                  {!ch.close_requested ? (
                     <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.8 }}
                       disabled={reqClosePartMut.isPending}
                       onClick={() => reqClosePartMut.mutate()}>
@@ -261,17 +268,22 @@ function ChallengeDetail({ id, onBack }) {
                   ) : (
                     <div style={{ fontSize: 13, color: "var(--text-muted)" }}>⏳ Завершение на рассмотрении</div>
                   )}
-                  {/* Запрос паузы участия */}
-                  {!ch.is_paused && !myPauseReq && (
+                  {!ch.is_paused && !ch.pause_requested && (
                     <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.8 }}
                       onClick={() => setShowPauseForm(v => !v)}>
                       ⏸ Запросить паузу
                     </button>
                   )}
-                  {myPauseReq && !ch.is_paused && (
+                  {ch.pause_requested && !ch.is_paused && (
                     <div style={{ fontSize: 13, color: "var(--text-muted)" }}>⏳ Пауза на рассмотрении</div>
                   )}
-                  {/* Сдаться */}
+                  {ch.is_paused && (
+                    <button className="btn btn-secondary" style={{ fontSize: 13, opacity: 0.7 }}
+                      disabled={requestUnfreezeMut.isPending}
+                      onClick={() => requestUnfreezeMut.mutate()}>
+                      {requestUnfreezeMut.isPending ? "..." : "▶️ Запросить разморозку"}
+                    </button>
+                  )}
                   <button className="btn btn-danger" style={{ fontSize: 13 }}
                     onClick={() => {
                       setShowSurrender(true);
@@ -289,8 +301,16 @@ function ChallengeDetail({ id, onBack }) {
                 </>
               );
             })()}
+            {ch.is_participant && !ch.is_owner && !ch.is_child && (() => {
+              // Старая архитектура совместимость — показываем только факт участия
+              const myPart = ch.participants.find(p => p.user_id === ch.viewer_id);
+              if (myPart?.result) return null;
+              return (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>✅ Ты участвуешь</div>
+              );
+            })()}
 
-            {!ch.is_owner && !ch.is_participant && ch.author_nick && (
+            {!ch.is_owner && !ch.is_participant && !ch.is_child && ch.author_nick && (
               !showJoinForm ? (
                 <button className="btn btn-primary" onClick={() => setShowJoinForm(true)}>
                   Присоединиться
@@ -420,6 +440,7 @@ function ChallengeRow({ ch, onClick }) {
     }} onClick={() => onClick(ch.id)}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 2 }}>
+          {ch.is_child && <span style={{ fontSize: 11, color: "var(--success)", marginRight: 5 }}>🤝</span>}
           {ch.title}
           {!ch.is_active && <span style={{ marginLeft: 6, fontSize: 11,
             color: "var(--text-dim)", fontWeight: 400 }}>завершён</span>}

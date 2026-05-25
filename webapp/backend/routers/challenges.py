@@ -66,30 +66,37 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
     author_res = await db.execute(select(User).where(User.tg_id == ch.user_id))
     author = author_res.scalar_one_or_none()
 
-    parts_res = await db.execute(
-        select(ChallengeParticipant, User)
-        .join(User, User.tg_id == ChallengeParticipant.user_id)
-        .where(ChallengeParticipant.challenge_id == ch.id)
-        .order_by(ChallengeParticipant.joined_at)
-    )
+    # Для родительского — список дочерних (участников)
+    # Для дочернего — пусто (у него нет своих участников)
     participants = []
     is_participant = False
     my_current_value = 0.0
     my_current_runs  = 0
-    for p, u in parts_res.all():
-        if viewer_id and u.tg_id == viewer_id:
-            is_participant = True
-            my_current_value = p.current_value or 0.0
-            my_current_runs  = p.current_runs  or 0
-        participants.append(ChallengeParticipantOut(
-            user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
-            penalty=p.penalty, current_runs=p.current_runs, current_value=p.current_value,
-            result=p.result,
-            close_requested=bool(getattr(p, "close_requested", False)),
-            pause_requested=bool(getattr(p, "pause_requested", False)),
-        ))
 
-    is_owner = viewer_id is not None and ch.user_id == viewer_id
+    if ch.parent_id is None:
+        # Это родительский: ищем дочерние
+        children_res = await db.execute(
+            select(Challenge, User)
+            .join(User, User.tg_id == Challenge.user_id)
+            .where(Challenge.parent_id == ch.id)
+            .order_by(Challenge.created_at)
+        )
+        for child, u in children_res.all():
+            if viewer_id and u.tg_id == viewer_id:
+                is_participant = True
+                my_current_value = child.current_value or 0.0
+                my_current_runs  = child.current_runs  or 0
+            participants.append(ChallengeParticipantOut(
+                user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
+                penalty=child.penalty,
+                current_runs=child.current_runs or 0,
+                current_value=child.current_value or 0.0,
+                result=child.result,
+                close_requested=bool(child.close_requested),
+                pause_requested=bool(child.pause_requested),
+            ))
+
+    is_owner = viewer_id is not None and ch.user_id == viewer_id and ch.parent_id is None
 
     days_left: int | None = None
     if ch.deadline:
@@ -97,6 +104,8 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
 
     # Заморожен ли сейчас
     is_paused = bool(ch.pause_until and ch.pause_until > datetime.now())
+
+    is_child = ch.parent_id is not None
 
     return ChallengeOut(
         id=ch.id, title=ch.title, ch_type=ch.ch_type,
@@ -113,9 +122,11 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         close_requested=bool(ch.close_requested),
         pause_requested=bool(ch.pause_requested),
         result=ch.result,
-        my_current_value=my_current_value,
-        my_current_runs=my_current_runs,
+        my_current_value=my_current_value if not is_child else (ch.current_value or 0.0),
+        my_current_runs=my_current_runs if not is_child else (ch.current_runs or 0),
         viewer_id=viewer_id,
+        parent_id=ch.parent_id,
+        is_child=is_child,
         participants=participants,
     )
 
@@ -128,17 +139,12 @@ async def get_my_challenges(
     db: AsyncSession = Depends(get_db),
 ) -> list[ChallengeOut]:
     user_id = tg_user["id"]
-    own_res = await db.execute(
+    # Все челленджи пользователя: свои (parent_id=None) + дочерние (участие в чужих)
+    res = await db.execute(
         select(Challenge).where(Challenge.user_id == user_id, Challenge.is_active == True)
         .order_by(Challenge.created_at.desc())
     )
-    joined_res = await db.execute(
-        select(Challenge)
-        .join(ChallengeParticipant, ChallengeParticipant.challenge_id == Challenge.id)
-        .where(ChallengeParticipant.user_id == user_id, Challenge.user_id != user_id, Challenge.is_active == True)
-        .order_by(Challenge.created_at.desc())
-    )
-    all_ch = list(own_res.scalars().all()) + list(joined_res.scalars().all())
+    all_ch = list(res.scalars().all())
     return [await _enrich_challenge(ch, db, user_id) for ch in all_ch]
 
 
@@ -150,17 +156,11 @@ async def get_my_history(
     db: AsyncSession = Depends(get_db),
 ) -> list[ChallengeOut]:
     user_id = tg_user["id"]
-    own_res = await db.execute(
+    res = await db.execute(
         select(Challenge).where(Challenge.user_id == user_id, Challenge.is_active == False)
-        .order_by(Challenge.created_at.desc()).limit(30)
+        .order_by(Challenge.created_at.desc()).limit(50)
     )
-    joined_res = await db.execute(
-        select(Challenge)
-        .join(ChallengeParticipant, ChallengeParticipant.challenge_id == Challenge.id)
-        .where(ChallengeParticipant.user_id == user_id, Challenge.user_id != user_id, Challenge.is_active == False)
-        .order_by(Challenge.created_at.desc()).limit(20)
-    )
-    all_ch = list(own_res.scalars().all()) + list(joined_res.scalars().all())
+    all_ch = list(res.scalars().all())
     return [await _enrich_challenge(ch, db, user_id) for ch in all_ch]
 
 
@@ -173,7 +173,11 @@ async def get_club_challenges(
     page: int = 0, page_size: int = 10,
 ) -> list[ChallengeOut]:
     res = await db.execute(
-        select(Challenge).where(Challenge.is_public == True, Challenge.is_active == True)
+        select(Challenge).where(
+            Challenge.is_public == True,
+            Challenge.is_active == True,
+            Challenge.parent_id.is_(None),  # только корневые
+        )
         .order_by(Challenge.created_at.desc()).offset(page * page_size).limit(page_size)
     )
     return [await _enrich_challenge(ch, db, tg_user["id"]) for ch in res.scalars().all()]
@@ -182,7 +186,11 @@ async def get_club_challenges(
 @router.get("/club/count")
 async def get_club_challenges_count(db: AsyncSession = Depends(get_db)) -> dict:
     res = await db.execute(
-        select(func.count()).where(Challenge.is_public == True, Challenge.is_active == True)
+        select(func.count()).select_from(Challenge).where(
+            Challenge.is_public == True,
+            Challenge.is_active == True,
+            Challenge.parent_id.is_(None),
+        )
     )
     return {"total": res.scalar()}
 
@@ -267,19 +275,44 @@ async def join_challenge(
     ch = ch_res.scalar_one_or_none()
     if not ch or not ch.is_active:
         return OkResponse(ok=False, reason="Челлендж не найден или завершён.")
-    if not ch.is_public:
+    if not ch.is_public or ch.parent_id is not None:
         return OkResponse(ok=False, reason="Челлендж закрыт для присоединения.")
     if ch.user_id == user_id:
         return OkResponse(ok=False, reason="Это твой собственный челлендж.")
+    # Проверяем: дочерний уже есть?
     exist = await db.execute(
-        select(ChallengeParticipant).where(
-            ChallengeParticipant.challenge_id == challenge_id,
-            ChallengeParticipant.user_id == user_id,
+        select(Challenge).where(
+            Challenge.parent_id == challenge_id,
+            Challenge.user_id == user_id,
         )
     )
     if exist.scalar_one_or_none():
         return OkResponse(ok=False, reason="Ты уже участвуешь в этом челлендже.")
-    db.add(ChallengeParticipant(challenge_id=challenge_id, user_id=user_id, penalty=body.penalty))
+
+    # Создаём дочерний Challenge
+    now = datetime.now()
+    child_deadline = None
+    if ch.deadline and ch.started_at:
+        duration = ch.deadline - ch.started_at
+        child_deadline = now + duration
+
+    child = Challenge(
+        user_id=user_id,
+        title=ch.title,
+        ch_type=ch.ch_type,
+        min_per_run=ch.min_per_run or 0.0,
+        min_minutes_per_run=ch.min_minutes_per_run or 0,
+        goal_runs=ch.goal_runs or 0,
+        goal_value=ch.goal_value or 0.0,
+        goal_time=ch.goal_time,
+        penalty=body.penalty,
+        is_public=False,
+        is_active=True,
+        started_at=now,
+        deadline=child_deadline,
+        parent_id=challenge_id,
+    )
+    db.add(child)
     await db.commit()
     return OkResponse(ok=True, reason=f"Ты присоединился к «{ch.title}»!")
 
@@ -292,16 +325,18 @@ async def leave_challenge(
     tg_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
     user_id = tg_user["id"]
-    part = await db.execute(
-        select(ChallengeParticipant).where(
-            ChallengeParticipant.challenge_id == challenge_id,
-            ChallengeParticipant.user_id == user_id,
+    child_res = await db.execute(
+        select(Challenge).where(
+            Challenge.parent_id == challenge_id,
+            Challenge.user_id == user_id,
+            Challenge.is_active == True,
         )
     )
-    p = part.scalar_one_or_none()
-    if not p:
+    child = child_res.scalar_one_or_none()
+    if not child:
         return OkResponse(ok=False, reason="Ты не участвуешь в этом челлендже.")
-    await db.delete(p)
+    child.is_active = False
+    child.result = "closed"
     await db.commit()
     return OkResponse(ok=True, reason="Ты вышел из челленджа.")
 
@@ -376,18 +411,28 @@ async def surrender_challenge(
     if not ch.is_active:
         return OkResponse(ok=False, reason="Челлендж уже завершён.")
 
-    # Проверяем что участник
-    from models import ChallengeParticipant as CP
-    part_res = await db.execute(
-        select(CP).where(CP.challenge_id == challenge_id, CP.user_id == user_id)
-    )
-    part = part_res.scalar_one_or_none()
-    if not part:
+    # Поддержка обеих архитектур:
+    # - если challenge_id — это дочерний (parent_id NOT NULL, user_id=я)
+    # - или ищем дочерний через parent_id
+    if ch.user_id == user_id and ch.parent_id is not None:
+        # Передан сразу child_id
+        child = ch
+    else:
+        child_res = await db.execute(
+            select(Challenge).where(
+                Challenge.parent_id == challenge_id,
+                Challenge.user_id == user_id,
+            )
+        )
+        child = child_res.scalar_one_or_none()
+
+    if not child:
         return OkResponse(ok=False, reason="Ты не участник этого челленджа.")
-    if part.result:
+    if child.result:
         return OkResponse(ok=False, reason="Твоё участие уже завершено.")
 
-    part.result = "failed"
+    child.result = "failed"
+    child.is_active = False
     await db.commit()
 
     # Публикуем в группу

@@ -80,35 +80,74 @@ function ProfileCard({ p }) {
   );
 }
 
-function Leaderboard({ data }) {
+const PERIODS  = [{v:"alltime",l:"Всё время"},{v:"season",l:"Сезон"},{v:"month",l:"Месяц"},{v:"week",l:"Неделя"}];
+const SORTS    = [{v:"xp",l:"XP"},{v:"km",l:"км"},{v:"runs",l:"пробежки"},{v:"streak",l:"стрик"}];
+
+function PillBar({ options, value, onChange }) {
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-      {data.map((u, i) => (
-        <div key={u.tg_id} style={{
-          display: "flex", alignItems: "center", gap: 12,
-          padding: "12px 16px",
-          borderBottom: i < data.length - 1 ? "1px solid var(--border)" : "none",
-        }}>
-          <div style={{
-            width: 28, textAlign: "center",
-            fontSize: i < 3 ? 14 : 12,
-            color: i === 0 ? "#f0c040" : i === 1 ? "#aaa" : i === 2 ? "#cd7f32" : "var(--text-dim)",
-            fontWeight: 600,
+    <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+      {options.map(o => (
+        <button key={o.v} onClick={() => onChange(o.v)}
+          style={{
+            padding:"4px 10px", borderRadius:20, border:"1px solid var(--border)",
+            background: value===o.v ? "var(--accent)" : "var(--bg-input)",
+            color: value===o.v ? "#000" : "var(--text)",
+            fontSize:12, cursor:"pointer", fontWeight: value===o.v ? 600 : 400,
           }}>
-            {i < 3 ? ["1st", "2nd", "3rd"][i] : `${i + 1}`}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 14 }}>{u.school_nick}</div>
-            {u.username && <div className="hint" style={{ fontSize: 12 }}>@{u.username}</div>}
-          </div>
-          <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontWeight: 600 }}>{u.xp} XP</div>
-            <div className="hint" style={{ fontSize: 12 }}>
-              Ур. {u.level} · стрик {u.streak}
-            </div>
-          </div>
-        </div>
+          {o.l}
+        </button>
       ))}
+    </div>
+  );
+}
+
+function LeaderRow({ u, i, sortBy }) {
+  const medalColors = ["#f0c040","#aaa","#cd7f32"];
+  let metric = `${u.xp} XP`;
+  let sub    = `Ур. ${u.level} · стрик ${u.streak}`;
+  if (sortBy === "km" && u.km != null)    { metric = `${u.km.toFixed(1)} км`; sub = `${u.xp} XP · Ур. ${u.level}`; }
+  if (sortBy === "runs" && u.runs != null) { metric = `${u.runs} бег`; sub = `${u.km?.toFixed(1) ?? "—"} км · ${u.xp} XP`; }
+  if (sortBy === "streak")                { metric = `${u.streak} нед`; sub = `${u.xp} XP · Ур. ${u.level}`; }
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", gap:12,
+      padding:"12px 16px",
+      borderBottom: "1px solid var(--border)",
+    }}>
+      <div style={{
+        width:28, textAlign:"center",
+        fontSize: i < 3 ? 16 : 12,
+        color: i < 3 ? medalColors[i] : "var(--text-dim)",
+        fontWeight:600,
+      }}>
+        {i < 3 ? ["🥇","🥈","🥉"][i] : `${i+1}`}
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontWeight:500, fontSize:14 }}>{u.school_nick}</div>
+        {u.username && <div className="hint" style={{ fontSize:12 }}>@{u.username}</div>}
+      </div>
+      <div style={{ textAlign:"right", flexShrink:0 }}>
+        <div style={{ fontWeight:600, fontSize:14 }}>{metric}</div>
+        <div className="hint" style={{ fontSize:11 }}>{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function Leaderboard({ data, period, setPeriod, sortBy, setSortBy }) {
+  return (
+    <div>
+      <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
+        <PillBar options={PERIODS} value={period} onChange={setPeriod} />
+        <PillBar options={SORTS}   value={sortBy} onChange={setSortBy} />
+      </div>
+      <div className="card" style={{ padding:0, overflow:"hidden" }}>
+        {data.length === 0 ? (
+          <div style={{ padding:24, textAlign:"center", color:"var(--text-muted)" }}>Нет данных за этот период</div>
+        ) : data.map((u, i) => (
+          <LeaderRow key={u.tg_id} u={u} i={i} sortBy={sortBy} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -134,7 +173,9 @@ function useInitDataReady() {
 }
 
 export default function Profile() {
-  const [tab, setTab] = useState("profile");
+  const [tab, setTab]       = useState("profile");
+  const [period, setPeriod] = useState("alltime");
+  const [sortBy, setSortBy] = useState("xp");
   const initReady = useInitDataReady();
 
   const profileQ = useQuery({
@@ -145,8 +186,8 @@ export default function Profile() {
   });
 
   const leaderQ = useQuery({
-    queryKey: ["leaderboard"],
-    queryFn: getLeaderboard,
+    queryKey: ["leaderboard", period, sortBy],
+    queryFn: () => getLeaderboard(period, sortBy),
     enabled: initReady && tab === "leaders",
     staleTime: 60_000,
   });
@@ -164,7 +205,9 @@ export default function Profile() {
       {tab === "leaders" && (
         leaderQ.isLoading ? <Loader /> :
         leaderQ.isError   ? <ErrorMessage error={leaderQ.error} /> :
-        <Leaderboard data={leaderQ.data} />
+        <Leaderboard data={leaderQ.data ?? []}
+          period={period} setPeriod={p => { setPeriod(p); }}
+          sortBy={sortBy} setSortBy={s => { setSortBy(s); }} />
       )}
     </div>
   );
