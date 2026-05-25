@@ -696,6 +696,7 @@ async def cb_my_open(call: CallbackQuery) -> None:
     from datetime import datetime as _dt
     builder = InlineKeyboardBuilder()
 
+    is_owner = (ch.user_id == call.from_user.id)
     is_paused = bool(ch.pause_until and ch.pause_until > _dt.now())
 
     # Получаем запись участника если не автор
