@@ -27,6 +27,8 @@ CLUB_INVITE_LINK: str = os.getenv("CLUB_INVITE_LINK", "https://t.me/+HLikNXKlA3Y
 _g = os.getenv("GROUP_ID", "")
 GROUP_ID: int | None = int(_g) if _g.strip() else None
 EVENTS_THREAD_ID: int | None = int(os.getenv("EVENTS_THREAD_ID", "0")) or None
+DIGEST_THREAD_ID: int | None = int(os.getenv("DIGEST_THREAD_ID", "0")) or None
+REPORTS_THREAD_ID: int | None = int(os.getenv("REPORTS_THREAD_ID", "0")) or None
 
 # Если DB_URL относительный — резолвим от корня проекта
 if DB_URL.startswith("sqlite+aiosqlite:///./"):

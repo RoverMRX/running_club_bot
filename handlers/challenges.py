@@ -1001,20 +1001,16 @@ async def cb_surrender_confirm(call: CallbackQuery) -> None:
             title = ch.title
             penalty = ch.penalty
             await session.commit()
-        else:
-            # Старая схема — через ChallengeParticipant (совместимость)
-            from models import ChallengeParticipant as _CP
-            p_res = await session.execute(
-                select(_CP).where(_CP.challenge_id == challenge_id, _CP.user_id == user_id)
-            )
-            part = p_res.scalar_one_or_none()
-            if not part or part.result:
-                await call.answer("Участие не найдено или уже завершено.", show_alert=True)
-                return
-            part.result = "failed"
-            title = ch.title if ch else "Челлендж"
-            penalty = part.penalty
+        elif ch.parent_id is not None and ch.user_id == user_id:
+            # Дочерний челлендж участника — сдаётся напрямую
+            ch.result = "failed"
+            ch.is_active = False
+            title = ch.title
+            penalty = ch.penalty
             await session.commit()
+        else:
+            await call.answer("Нельзя сдаться в этом челлендже.", show_alert=True)
+            return
 
     # Публикуем в группу
     from sqlalchemy import select as _sel

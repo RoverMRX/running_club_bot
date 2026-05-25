@@ -427,26 +427,24 @@ async def surrender_challenge(
 
     child.result = "failed"
     child.is_active = False
-    await db.commit()
 
-    # Публикуем в группу через pending_notifications → бот отправит в болталку
+    # Публикуем в группу — всё в одном commit
     nick_res = await db.execute(select(User.school_nick, User.username).where(User.tg_id == user_id))
     u_row = nick_res.one_or_none()
     name = f"@{u_row[1]}" if u_row and u_row[1] else (u_row[0] if u_row else str(user_id))
     penalty_str = f" 💰 Ставка: {child.penalty}" if child.penalty else ""
-    try:
-        import json as _json, config as _cfg
-        from models import PendingNotification
-        if _cfg.GROUP_ID:
-            db.add(PendingNotification(
-                user_tg_id=_cfg.GROUP_ID,
-                text=f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}",
-                kb_json=_json.dumps({"thread_id": _cfg.DIGEST_THREAD_ID}) if _cfg.DIGEST_THREAD_ID else None,
-            ))
-            await db.commit()
-    except Exception as e:
-        import logging; logging.getLogger("challenges").warning("surrender notify: %s", e)
 
+    import json as _json
+    from config import GROUP_ID as _GROUP_ID, DIGEST_THREAD_ID as _DIGEST_THREAD_ID
+    from models import PendingNotification
+    if _GROUP_ID:
+        db.add(PendingNotification(
+            user_tg_id=_GROUP_ID,
+            text=f"🏳️ <b>{name}</b> сдался в челлендже «{ch.title}».{penalty_str}",
+            kb_json=_json.dumps({"thread_id": _DIGEST_THREAD_ID}) if _DIGEST_THREAD_ID else None,
+        ))
+
+    await db.commit()
     return OkResponse(ok=True, reason="Ты вышел из челленджа. Результат зафиксирован как не выполнен.")
 
 
