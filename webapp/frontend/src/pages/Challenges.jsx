@@ -522,10 +522,14 @@ function CreateForm({ onSuccess }) {
   const qc = useQueryClient();
   const [step, setStep] = useState("type"); // "type" | "form"
   const [chType, setChType] = useState(null);
+  function todayStr() {
+    return new Date().toISOString().split("T")[0];
+  }
   const [form, setForm] = useState({
     title: "", penalty: "", is_public: true,
     goal_runs: "", goal_value: "",
     min_per_run: "", min_minutes_per_run: "",
+    started_at: todayStr(),
     deadline: defaultDeadline(), has_deadline: false,
   });
   const [err, setErr] = useState("");
@@ -560,6 +564,7 @@ function CreateForm({ onSuccess }) {
       goal_value:          +form.goal_value   || 0,
       min_per_run:         +form.min_per_run  || 0,
       min_minutes_per_run: +form.min_minutes_per_run || 0,
+      started_at:          form.started_at ? dateInputToApi(form.started_at) : null,
       deadline:            (chType === "weekly_runs" || chType === "race") && form.deadline && (chType === "race" || form.has_deadline)
         ? dateInputToApi(form.deadline) : null,
     });
@@ -605,6 +610,15 @@ function CreateForm({ onSuccess }) {
         <div className="form-group">
           <label>Название *</label>
           <input value={form.title} onChange={set("title")} placeholder="Например: 100 км за месяц" />
+        </div>
+
+        <div className="form-group">
+          <label>Дата старта</label>
+          <input value={form.started_at} onChange={set("started_at")} type="date"
+            min={new Date().toISOString().split("T")[0]} />
+          <div className="hint" style={{ fontSize: 11, marginTop: 4 }}>
+            Сегодня или в будущем. Для забега — дата самого забега.
+          </div>
         </div>
 
         {isWeeklyRuns && (

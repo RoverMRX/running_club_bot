@@ -103,10 +103,6 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
 
     days_left: int | None = None
     if ch.deadline:
-        delta = ch.deadline - datetime.now()
-        # +1 чтобы "сегодня до 23:59" показывало 0, а не -1
-        days_left = max(0, delta.days if delta.seconds == 0 else delta.days + (1 if delta.days >= 0 else 0))
-        # Упрощённо: если дедлайн ещё не прошёл — минимум 0
         days_left = max(0, (ch.deadline.date() - datetime.now().date()).days)
 
     # Заморожен ли сейчас
@@ -146,11 +142,23 @@ async def get_my_challenges(
     db: AsyncSession = Depends(get_db),
 ) -> list[ChallengeOut]:
     user_id = tg_user["id"]
-    res = await db.execute(
-        select(Challenge).where(Challenge.user_id == user_id, Challenge.is_active == True)
-        .order_by(Challenge.created_at.desc())
+    # Свои корневые (owner): показываем все активные
+    # Дочерние (участие): только активные
+    res_own = await db.execute(
+        select(Challenge).where(
+            Challenge.user_id == user_id,
+            Challenge.is_active == True,
+            Challenge.parent_id.is_(None),
+        ).order_by(Challenge.created_at.desc())
     )
-    all_ch = list(res.scalars().all())
+    res_child = await db.execute(
+        select(Challenge).where(
+            Challenge.user_id == user_id,
+            Challenge.is_active == True,
+            Challenge.parent_id.isnot(None),
+        ).order_by(Challenge.created_at.desc())
+    )
+    all_ch = list(res_own.scalars().all()) + list(res_child.scalars().all())
     return [await _enrich_challenge(ch, db, user_id) for ch in all_ch]
 
 
@@ -239,20 +247,39 @@ async def create_challenge(
     min_minutes_per_run = int(body.get("min_minutes_per_run") or 0)
     penalty             = (body.get("penalty") or "").strip() or None
     is_public           = bool(body.get("is_public", True))
-    started_at          = datetime.now()
+
+    # Дата старта — сегодня или указанная пользователем
+    started_at = datetime.now()
+    if body.get("started_at"):
+        try:
+            sa = datetime.strptime(body["started_at"], "%d.%m.%Y")
+            if sa.date() >= datetime.now().date():
+                started_at = sa.replace(hour=0, minute=0, second=0)
+        except ValueError:
+            return OkResponse(ok=False, reason="Неверный формат даты старта. Используй ДД.ММ.ГГГГ")
 
     deadline: datetime | None = None
     if ch_type in _SPRINT_DAYS:
+        # Дедлайн спринта считается от даты старта
         d = started_at + timedelta(days=_SPRINT_DAYS[ch_type])
         deadline = d.replace(hour=23, minute=59, second=59)
-    elif ch_type in ("weekly_runs", "race") and body.get("deadline"):
+    elif ch_type == "race" and body.get("deadline"):
+        try:
+            race_date = datetime.strptime(body["deadline"], "%d.%m.%Y")
+        except ValueError:
+            return OkResponse(ok=False, reason="Неверный формат даты. Используй ДД.ММ.ГГГГ")
+        if race_date.date() < datetime.now().date():
+            return OkResponse(ok=False, reason="Дата забега не может быть в прошлом")
+        # Дедлайн = дата забега + 1 день на отчёт и апрув
+        deadline = (race_date + timedelta(days=1)).replace(hour=23, minute=59, second=59)
+        started_at = race_date.replace(hour=0, minute=0, second=0)
+    elif ch_type == "weekly_runs" and body.get("deadline"):
         try:
             deadline = datetime.strptime(body["deadline"], "%d.%m.%Y")
         except ValueError:
             return OkResponse(ok=False, reason="Неверный формат даты. Используй ДД.ММ.ГГГГ")
         if deadline.date() < started_at.date():
-            return OkResponse(ok=False, reason="Дата не может быть в прошлом")
-        # Дедлайн = конец указанного дня
+            return OkResponse(ok=False, reason="Дата дедлайна не может быть раньше даты старта")
         deadline = deadline.replace(hour=23, minute=59, second=59)
 
     if ch_type == "weekly_runs" and goal_runs <= 0:
@@ -289,7 +316,11 @@ async def join_challenge(
     if ch.user_id == user_id:
         return OkResponse(ok=False, reason="Это твой собственный челлендж.")
     exist = await db.execute(
-        select(Challenge).where(Challenge.parent_id == challenge_id, Challenge.user_id == user_id)
+        select(Challenge).where(
+            Challenge.parent_id == challenge_id,
+            Challenge.user_id == user_id,
+            Challenge.is_active == True,
+        )
     )
     if exist.scalar_one_or_none():
         return OkResponse(ok=False, reason="Ты уже участвуешь в этом челлендже.")
