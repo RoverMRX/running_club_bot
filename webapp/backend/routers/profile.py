@@ -195,3 +195,15 @@ async def get_leaderboard(
             "runs":        row.total_runs,
         })
     return result
+
+
+@router.get("/achievements")
+async def get_achievements(
+    tg_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Все ачивки с флагом earned для текущего пользователя."""
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    from services.achievements import get_user_achievements
+    return await get_user_achievements(tg_user["id"])

@@ -387,3 +387,30 @@ class PendingNotification(Base):
     kb_json    = Column(String,   nullable=True)       # JSON inline-кнопок (опционально)
     created_at = Column(DateTime, default=datetime.now)
     sent       = Column(Boolean,  default=False)       # флаг: уже отправлено
+# ────────────────────────────────────────────
+# Ачивменты
+# ────────────────────────────────────────────
+
+class Achievement(Base):
+    """Справочник ачивментов."""
+    __tablename__ = "achievements"
+
+    slug        = Column(String,  primary_key=True)   # km_1, streak_4, early_bird …
+    name        = Column(String,  nullable=False)
+    description = Column(String,  nullable=False)
+    category    = Column(String,  nullable=False)      # km / streak / pr / event / tournament / special
+    image_url   = Column(String,  nullable=True)       # /achievements/<slug>.png
+
+    user_achievements = relationship("UserAchievement", back_populates="achievement", lazy="selectin")
+
+
+class UserAchievement(Base):
+    """Факт получения ачивки пользователем."""
+    __tablename__ = "user_achievements"
+
+    id          = Column(Integer,    primary_key=True)
+    user_tg_id  = Column(BigInteger, nullable=False, index=True)
+    slug        = Column(String,     ForeignKey("achievements.slug"), nullable=False)
+    earned_at   = Column(DateTime,   default=datetime.now)
+
+    achievement = relationship("Achievement", back_populates="user_achievements")

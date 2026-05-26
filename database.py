@@ -40,6 +40,21 @@ async def init_db() -> None:
         "ALTER TABLE challenges ADD COLUMN parent_id INTEGER REFERENCES challenges(id)",
         # Время в отчётах (для race-челленджей)
         "ALTER TABLE reports ADD COLUMN duration_sec INTEGER",
+        # Ачивменты
+        """CREATE TABLE IF NOT EXISTS achievements (
+            slug TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            image_url TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_achievements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_tg_id INTEGER NOT NULL,
+            slug TEXT NOT NULL REFERENCES achievements(slug),
+            earned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_user_ach ON user_achievements(user_tg_id)",
     ]
 
     async with async_session() as session:
@@ -53,6 +68,8 @@ async def init_db() -> None:
 
     # Миграция данных: конвертируем ChallengeParticipant → дочерние Challenge
     await _migrate_participants_to_children()
+    # Заполняем справочник ачивментов (идемпотентно)
+    await _seed_achievements()
 
 
 async def _migrate_participants_to_children() -> None:
@@ -158,3 +175,58 @@ async def _migrate_participants_to_children() -> None:
 
         await session.commit()
         _log.getLogger("database").info("Миграция ChallengeParticipant завершена.")
+
+
+async def _seed_achievements() -> None:
+    """Заполняет справочник ачивментов. Добавляет только отсутствующие."""
+    ACHIEVEMENTS = [
+        # slug, name, description, category
+        # км
+        ("km_1",       "Первый километр",      "Суммарно пробежал 1 км",                         "km"),
+        ("km_10",      "10 км в копилке",       "Суммарно пробежал 10 км",                        "km"),
+        ("km_100",     "Сотня",                 "Суммарно пробежал 100 км",                       "km"),
+        ("km_500",     "Полтысячи",             "Суммарно пробежал 500 км",                       "km"),
+        ("km_1000",    "Тысячник",              "Суммарно пробежал 1000 км",                      "km"),
+        ("km_5000",    "Легенда",               "Суммарно пробежал 5000 км",                      "km"),
+        # стрик
+        ("streak_1",   "Первая неделя",         "Стрик 1 неделя",                                 "streak"),
+        ("streak_4",   "Месяц без остановок",   "Стрик 4 недели подряд",                          "streak"),
+        ("streak_12",  "Квартал",               "Стрик 12 недель подряд",                         "streak"),
+        ("streak_24",  "Полгода",               "Стрик 24 недели подряд",                         "streak"),
+        ("streak_52",  "Год бега",              "Стрик 52 недели подряд",                         "streak"),
+        # PR
+        ("pr_5",       "5 км покорены",         "Одна пробежка ≥ 5 км",                           "pr"),
+        ("pr_10",      "Десятка",               "Одна пробежка ≥ 10 км",                          "pr"),
+        ("pr_half",    "Полумарафон",           "Одна пробежка ≥ 21.1 км",                        "pr"),
+        ("pr_marathon","Марафон",               "Одна пробежка ≥ 42.2 км",                        "pr"),
+        # события
+        ("first_report",    "Первый отчёт",     "Первый одобренный отчёт о пробежке",             "event"),
+        ("first_event",     "Первое мероприятие","Первое посещённое клубное мероприятие",         "event"),
+        ("first_challenge", "Первый челлендж",  "Создал или вступил в первый челлендж",           "event"),
+        # турниры
+        ("tournament_gold", "Золото",           "Первое место в турнире",                         "tournament"),
+        ("tournament_hat",  "Хет-трик",         "Три победы в турнирах",                          "tournament"),
+        # особые
+        ("early_bird",  "Ранняя пташка",        "Пробежка с отчётом до 07:00 🌅",                "special"),
+        ("night_owl",   "Ночной бегун",         "Пробежка с отчётом после 22:00 🌙",             "special"),
+        ("winter_run",  "Зимний воин",          "Пробежка в декабре, январе или феврале ❄️",     "special"),
+    ]
+
+    async with async_session() as session:
+        for slug, name, description, category in ACHIEVEMENTS:
+            existing = await session.execute(
+                text("SELECT slug FROM achievements WHERE slug = :slug"), {"slug": slug}
+            )
+            if not existing.fetchone():
+                await session.execute(
+                    text("""INSERT INTO achievements (slug, name, description, category, image_url)
+                            VALUES (:slug, :name, :desc, :cat, :url)"""),
+                    {
+                        "slug": slug,
+                        "name": name,
+                        "desc": description,
+                        "cat":  category,
+                        "url":  f"/achievements/{slug}.png",
+                    }
+                )
+        await session.commit()

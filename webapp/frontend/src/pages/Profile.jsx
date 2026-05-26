@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getProfile, getLeaderboard, getInitData } from "../api";
+import { getProfile, getLeaderboard, getAchievements, getInitData } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 
@@ -76,6 +76,123 @@ function ProfileCard({ p }) {
         { label: "Личный рекорд", value: p.best_km != null ? `${p.best_km} км` : "—" },
         { label: "Уровень",       value: p.level },
       ]} />
+    </div>
+  );
+}
+
+
+const CATEGORY_LABELS = {
+  km:         "🏃 Километраж",
+  streak:     "🔥 Стрик",
+  pr:         "🏅 Личный рекорд",
+  event:      "📋 Мероприятия",
+  tournament: "🏆 Турниры",
+  special:    "✨ Особые",
+};
+
+function AchievementBadge({ ach, onClick }) {
+  const earned = ach.earned;
+  return (
+    <div onClick={() => onClick(ach)}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        gap: 6, cursor: "pointer", opacity: earned ? 1 : 0.35,
+      }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: "50%",
+        overflow: "hidden", background: "var(--bg-input)",
+        border: earned ? "2px solid var(--accent)" : "2px solid var(--border)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0,
+      }}>
+        {ach.image_url ? (
+          <img
+            src={ach.image_url}
+            alt={ach.name}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onError={e => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
+          />
+        ) : null}
+        <div style={{
+          display: ach.image_url ? "none" : "flex",
+          width: "100%", height: "100%",
+          alignItems: "center", justifyContent: "center",
+          fontSize: 28,
+        }}>🏅</div>
+      </div>
+      <div style={{
+        fontSize: 10, textAlign: "center", lineHeight: 1.2,
+        color: earned ? "var(--text)" : "var(--text-dim)",
+        maxWidth: 64, wordBreak: "break-word",
+      }}>{ach.name}</div>
+    </div>
+  );
+}
+
+function AchievementsModal({ ach, onClose }) {
+  if (!ach) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1000, padding: 20,
+    }} onClick={onClose}>
+      <div style={{
+        background: "var(--bg-card)", borderRadius: 16,
+        padding: 24, maxWidth: 300, width: "100%",
+        textAlign: "center",
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{
+          width: 96, height: 96, borderRadius: "50%",
+          overflow: "hidden", margin: "0 auto 16px",
+          background: "var(--bg-input)",
+          border: ach.earned ? "3px solid var(--accent)" : "3px solid var(--border)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          opacity: ach.earned ? 1 : 0.4,
+        }}>
+          {ach.image_url
+            ? <img src={ach.image_url} alt={ach.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <span style={{ fontSize: 48 }}>🏅</span>}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{ach.name}</div>
+        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>{ach.description}</div>
+        {ach.earned
+          ? <div style={{ fontSize: 12, color: "var(--success)" }}>
+              ✅ Получена {new Date(ach.earned_at).toLocaleDateString("ru")}
+            </div>
+          : <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Пока не получена</div>}
+        <button className="btn btn-secondary" style={{ marginTop: 16 }} onClick={onClose}>Закрыть</button>
+      </div>
+    </div>
+  );
+}
+
+function AchievementsPage({ data }) {
+  const [selected, setSelected] = useState(null);
+  const grouped = {};
+  for (const ach of data) {
+    if (!grouped[ach.category]) grouped[ach.category] = [];
+    grouped[ach.category].push(ach);
+  }
+  const earnedCount = data.filter(a => a.earned).length;
+
+  return (
+    <div>
+      <AchievementsModal ach={selected} onClose={() => setSelected(null)} />
+      <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+        Получено: {earnedCount} / {data.length}
+      </div>
+      {Object.entries(grouped).map(([cat, achs]) => (
+        <div key={cat} style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+            {CATEGORY_LABELS[cat] || cat}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            {achs.map(a => <AchievementBadge key={a.slug} ach={a} onClick={setSelected} />)}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -176,6 +293,7 @@ export default function Profile() {
   const [tab, setTab]       = useState("profile");
   const [period, setPeriod] = useState("alltime");
   const [sortBy, setSortBy] = useState("xp");
+  const [achModal, setAchModal] = useState(null);
   const initReady = useInitDataReady();
 
   const profileQ = useQuery({
@@ -192,6 +310,13 @@ export default function Profile() {
     staleTime: 60_000,
   });
 
+  const achQ = useQuery({
+    queryKey: ["achievements"],
+    queryFn: getAchievements,
+    enabled: initReady,
+    staleTime: 60_000,
+  });
+
   if (!initReady || profileQ.isLoading) return <Loader />;
   if (profileQ.isError) return <ErrorMessage error={profileQ.error} />;
 
@@ -199,9 +324,37 @@ export default function Profile() {
     <div>
       <div className="tabs">
         <button className={"tab" + (tab === "profile" ? " active" : "")} onClick={() => setTab("profile")}>Профиль</button>
+        <button className={"tab" + (tab === "ach"     ? " active" : "")} onClick={() => setTab("ach")}>Ачивки</button>
         <button className={"tab" + (tab === "leaders" ? " active" : "")} onClick={() => setTab("leaders")}>Лидеры</button>
       </div>
-      {tab === "profile" && <ProfileCard p={profileQ.data} />}
+      {tab === "profile" && (
+        <div>
+          <ProfileCard p={profileQ.data} />
+          {achQ.data && achQ.data.filter(a => a.earned).length > 0 && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>🏅 Ачивки</div>
+                <button style={{ fontSize: 12, color: "var(--accent)", background: "none",
+                  border: "none", cursor: "pointer", padding: 0 }}
+                  onClick={() => setTab("ach")}>
+                  Все →
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {achQ.data.filter(a => a.earned).slice(0, 5).map(a => (
+                  <AchievementBadge key={a.slug} ach={a} onClick={setAchModal} />
+                ))}
+              </div>
+              <AchievementsModal ach={achModal} onClose={() => setAchModal(null)} />
+            </div>
+          )}
+        </div>
+      )}
+      {tab === "ach" && (
+        achQ.isLoading ? <Loader /> :
+        achQ.isError   ? <ErrorMessage error={achQ.error} /> :
+        <AchievementsPage data={achQ.data ?? []} />
+      )}
       {tab === "leaders" && (
         leaderQ.isLoading ? <Loader /> :
         leaderQ.isError   ? <ErrorMessage error={leaderQ.error} /> :

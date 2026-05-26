@@ -621,6 +621,12 @@ async def cb_vote_yes(callback: types.CallbackQuery, bot: Bot):
         ap = await approve_report(report_id)
         await _notify_athlete(bot, ap)
         await _notify_group_approved(bot, ap)
+        # Ачивменты
+        try:
+            from services.achievements import check_and_grant as _ach
+            await _ach(ap['user_tg_id'], ap['km'], bot=bot)
+        except Exception as _e:
+            pass
         # vote-сообщение — это и есть callback.message, кнопки уберёт edit_text ниже
         try:
             await callback.message.edit_text(
@@ -695,6 +701,12 @@ async def cb_admin_approve(callback: types.CallbackQuery, bot: Bot):
     if not ap.get('already_approved'):
         await _notify_athlete(bot, ap)
         await _notify_group_approved(bot, ap)
+        # Ачивменты
+        try:
+            from services.achievements import check_and_grant as _ach
+            await _ach(ap['user_tg_id'], ap['km'], bot=bot)
+        except Exception as _e:
+            pass
     await _clear_vote_buttons(bot, report_id)
 
     try:
