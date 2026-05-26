@@ -20,6 +20,25 @@ _sg = os.getenv("SECONDARY_GROUP_ID", "")
 SECONDARY_GROUP_ID: int | None = int(_sg) if _sg.strip() else None
 SECONDARY_THREAD_ID: int | None = int(os.getenv("SECONDARY_THREAD_ID", "0")) or None
 
+def _parse_secondary_targets() -> list[tuple[int, int | None]]:
+    raw = os.getenv("SECONDARY_TARGETS", "").strip()
+    result = []
+    if raw:
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" in part:
+                gid, tid = part.split(":", 1)
+                result.append((int(gid), int(tid) if tid.strip() else None))
+            else:
+                result.append((int(part), None))
+    elif SECONDARY_GROUP_ID:
+        result.append((SECONDARY_GROUP_ID, SECONDARY_THREAD_ID))
+    return result
+
+SECONDARY_TARGETS: list[tuple[int, int | None]] = _parse_secondary_targets()
+
 # Ссылка-приглашение в клуб (для репоста в вторичную группу)
 CLUB_INVITE_LINK: str = os.getenv("CLUB_INVITE_LINK", "https://t.me/+HLikNXKlA3YwNDRi")
 

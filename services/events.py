@@ -286,7 +286,8 @@ async def publish_to_secondary_group(
     bot: Bot,
     club_invite_link: str = "https://t.me/+HLikNXKlA3YwNDRi",
 ) -> int:
-    """Публикует текстовый анонс во вторую группу (без кнопок). Возвращает message_id."""
+    """Публикует анонс во все вторичные группы из SECONDARY_TARGETS. Возвращает последний message_id."""
+    from config import SECONDARY_TARGETS
     event = await session.get(Event, event_id)
     if event is None:
         raise ValueError(f"Мероприятие #{event_id} не найдено")
@@ -295,12 +296,23 @@ async def publish_to_secondary_group(
         f"{format_announce(event)}\n\n"
         f"👟 Хочешь бегать вместе? Вступай в клуб: {club_invite_link}"
     )
-    msg = await bot.send_message(
-        chat_id=SECONDARY_GROUP_ID,
-        text=text,
-        message_thread_id=SECONDARY_THREAD_ID,
-        parse_mode="HTML",
-    )
-    event.repost_msg_id = msg.message_id
+
+    last_msg_id = 0
+    for group_id, thread_id in SECONDARY_TARGETS:
+        try:
+            msg = await bot.send_message(
+                chat_id=group_id,
+                text=text,
+                message_thread_id=thread_id if thread_id and thread_id != 1 else None,
+                parse_mode="HTML",
+            )
+            last_msg_id = msg.message_id
+        except Exception as e:
+            import logging
+            logging.getLogger("events").warning(
+                "Не удалось опубликовать в группу %s тред %s: %s", group_id, thread_id, e
+            )
+
+    event.repost_msg_id = last_msg_id
     await session.commit()
-    return msg.message_id
+    return last_msg_id

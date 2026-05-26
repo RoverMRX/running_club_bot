@@ -21,6 +21,27 @@ _sg = os.getenv("SECONDARY_GROUP_ID", "")
 SECONDARY_GROUP_ID: int | None   = int(_sg) if _sg.strip() else None
 SECONDARY_THREAD_ID: int | None  = int(os.getenv("SECONDARY_THREAD_ID", "0")) or None
 
+# Список целей для репоста мероприятий: "group_id:thread_id,group_id:thread_id"
+# Если не задан — используется старая пара SECONDARY_GROUP_ID / SECONDARY_THREAD_ID
+def _parse_secondary_targets() -> list[tuple[int, int | None]]:
+    raw = os.getenv("SECONDARY_TARGETS", "").strip()
+    result = []
+    if raw:
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" in part:
+                gid, tid = part.split(":", 1)
+                result.append((int(gid), int(tid) if tid.strip() else None))
+            else:
+                result.append((int(part), None))
+    elif SECONDARY_GROUP_ID:
+        result.append((SECONDARY_GROUP_ID, SECONDARY_THREAD_ID))
+    return result
+
+SECONDARY_TARGETS: list[tuple[int, int | None]] = _parse_secondary_targets()
+
 # Администраторы (через запятую: "123,456")
 _a = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS: list[int] = [int(i.strip()) for i in _a.split(",") if i.strip()]
