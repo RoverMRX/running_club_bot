@@ -516,3 +516,214 @@ async def cmd_set_menu_button(message: Message) -> None:
         await message.answer(f"✅ Кнопка меню обновлена.\nURL: {WEBAPP_URL}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Управление челленджами (удаление)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.message(F.text == "🗑 Управление челленджами")
+async def cmd_manage_challenges(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    from sqlalchemy import select as _sel
+    from models import Challenge as _Ch
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        # Показываем все корневые челленджи (parent_id IS NULL)
+        res = await session.execute(
+            _sel(_Ch).where(_Ch.parent_id.is_(None))
+            .order_by(_Ch.is_active.desc(), _Ch.created_at.desc())
+            .limit(30)
+        )
+        challenges = res.scalars().all()
+
+    if not challenges:
+        await message.answer("Нет челленджей.", reply_markup=get_admin_main_kb())
+        return
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    for ch in challenges:
+        status = "🟢" if ch.is_active else "⚫"
+        result_label = f" [{ch.result}]" if ch.result else ""
+        kb.button(
+            text=f"{status} {ch.title}{result_label} (id={ch.id})",
+            callback_data=f"adm_ch_info:{ch.id}"
+        )
+    kb.adjust(1)
+
+    await message.answer(
+        "🗑 <b>Управление челленджами</b>\n\n"
+        "🟢 — активный · ⚫ — завершён\n\n"
+        "Выбери челлендж:",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("adm_ch_info:"))
+async def cb_adm_ch_info(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    ch_id = int(call.data.split(":")[1])
+
+    from sqlalchemy import select as _sel, func as _func
+    from models import Challenge as _Ch
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        res = await session.execute(_sel(_Ch).where(_Ch.id == ch_id))
+        ch = res.scalar_one_or_none()
+        if not ch:
+            await call.answer("Не найден.", show_alert=True)
+            return
+
+        # Считаем дочерние
+        cnt = await session.execute(
+            _sel(_func.count(_Ch.id)).where(_Ch.parent_id == ch_id)
+        )
+        participants_count = cnt.scalar() or 0
+
+        active_cnt = await session.execute(
+            _sel(_func.count(_Ch.id)).where(
+                _Ch.parent_id == ch_id, _Ch.is_active == True
+            )
+        )
+        active_count = active_cnt.scalar() or 0
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+
+    if ch.is_active:
+        kb.button(text="⛔ Деактивировать (скрыть)", callback_data=f"adm_ch_deactivate:{ch_id}")
+    else:
+        kb.button(text="✅ Активировать", callback_data=f"adm_ch_activate:{ch_id}")
+
+    kb.button(text="🗑 Удалить полностью", callback_data=f"adm_ch_delete_ask:{ch_id}")
+    kb.button(text="❌ Закрыть", callback_data="adm_ch_close_menu")
+    kb.adjust(1)
+
+    status = "🟢 Активный" if ch.is_active else f"⚫ Завершён [{ch.result or '—'}]"
+    deadline_str = ch.deadline.strftime("%d.%m.%Y") if ch.deadline else "бессрочно"
+
+    await call.message.edit_text(
+        f"<b>{ch.title}</b> (id={ch.id})\n\n"
+        f"Тип: {ch.ch_type}\n"
+        f"Статус: {status}\n"
+        f"Дедлайн: {deadline_str}\n"
+        f"Участников всего: {participants_count} · активных: {active_count}\n\n"
+        f"Выбери действие:",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_ch_deactivate:"))
+async def cb_adm_ch_deactivate(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    ch_id = int(call.data.split(":")[1])
+    from sqlalchemy import select as _sel
+    from models import Challenge as _Ch
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        async with session.begin():
+            res = await session.execute(_sel(_Ch).where(_Ch.id == ch_id))
+            ch = res.scalar_one_or_none()
+            if ch:
+                ch.is_active = False
+                ch.result = "closed"
+
+    await call.message.edit_text(
+        call.message.text + "\n\n⚫ <b>Деактивирован.</b>",
+        parse_mode="HTML"
+    )
+    await call.answer("Челлендж деактивирован.")
+
+
+@router.callback_query(F.data.startswith("adm_ch_activate:"))
+async def cb_adm_ch_activate(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    ch_id = int(call.data.split(":")[1])
+    from sqlalchemy import select as _sel
+    from models import Challenge as _Ch
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        async with session.begin():
+            res = await session.execute(_sel(_Ch).where(_Ch.id == ch_id))
+            ch = res.scalar_one_or_none()
+            if ch:
+                ch.is_active = True
+                ch.result = None
+
+    await call.message.edit_text(
+        call.message.text + "\n\n🟢 <b>Активирован.</b>",
+        parse_mode="HTML"
+    )
+    await call.answer("Челлендж активирован.")
+
+
+@router.callback_query(F.data.startswith("adm_ch_delete_ask:"))
+async def cb_adm_ch_delete_ask(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    ch_id = int(call.data.split(":")[1])
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚠️ Да, удалить", callback_data=f"adm_ch_delete_confirm:{ch_id}")
+    kb.button(text="❌ Отмена", callback_data=f"adm_ch_info:{ch_id}")
+    kb.adjust(2)
+
+    await call.message.edit_text(
+        "⚠️ <b>Удалить челлендж полностью?</b>\n\n"
+        "Удалятся сам челлендж и все дочерние (участники).\n"
+        "Отчёты участников <b>сохранятся</b>.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_ch_delete_confirm:"))
+async def cb_adm_ch_delete_confirm(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    ch_id = int(call.data.split(":")[1])
+    from sqlalchemy import select as _sel, delete as _del
+    from models import Challenge as _Ch
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        async with session.begin():
+            # Сначала удаляем дочерние
+            await session.execute(_del(_Ch).where(_Ch.parent_id == ch_id))
+            # Затем сам челлендж
+            await session.execute(_del(_Ch).where(_Ch.id == ch_id))
+
+    await call.message.edit_text(
+        "🗑 <b>Челлендж удалён.</b>",
+        parse_mode="HTML"
+    )
+    await call.answer("Удалено.")
+
+
+@router.callback_query(F.data == "adm_ch_close_menu")
+async def cb_adm_ch_close_menu(call: CallbackQuery) -> None:
+    await call.message.delete()
+    await call.answer()
