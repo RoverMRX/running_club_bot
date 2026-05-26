@@ -41,7 +41,6 @@ async def main() -> None:
     )
 
     # ── Кнопка меню — открывает Mini App прямо из личного чата ──────
-    # Устанавливается один раз при старте, сохраняется в Telegram.
     try:
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
@@ -72,23 +71,17 @@ async def main() -> None:
     print(f"   Часовой пояс планировщика: Asia/Omsk")
     print(f"   Mini App: {WEBAPP_URL}")
 
-    # delete_webhook с retry в фоне — не блокирует старт polling
-    import asyncio as _asyncio
-
-    async def _delete_webhook_with_retry():
-        for attempt in range(20):
-            try:
-                await bot.delete_webhook(drop_pending_updates=True)
-                logging.getLogger("__main__").info("delete_webhook: OK")
-                return
-            except Exception as e:
-                wait = min(5 * (attempt + 1), 60)
-                logging.getLogger("__main__").warning(
-                    "delete_webhook failed (%s), retry in %ds...", e, wait
-                )
-                await _asyncio.sleep(wait)
-
-    _asyncio.ensure_future(_delete_webhook_with_retry())
+    # ── Старт polling с retry на случай флапающей прокси ────────────
+    log = logging.getLogger("__main__")
+    for attempt in range(60):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            log.info("delete_webhook: OK, запускаем polling")
+            break
+        except Exception as e:
+            wait = min(5 * (attempt + 1), 30)
+            log.warning("Прокси недоступна (%s), жду %ds... (попытка %d/60)", e, wait, attempt + 1)
+            await asyncio.sleep(wait)
 
     try:
         await dp.start_polling(bot)
@@ -98,7 +91,14 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    log = logging.getLogger("__main__")
+    # Внешний retry loop — если start_polling упал из-за прокси, перезапускаем main
+    while True:
+        try:
+            asyncio.run(main())
+            break  # нормальное завершение (Ctrl+C)
+        except (KeyboardInterrupt, SystemExit):
+            break
+        except Exception as e:
+            log.error("Бот упал: %s, перезапуск через 10с...", e)
+            import time; time.sleep(10)
