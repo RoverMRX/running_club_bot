@@ -485,7 +485,7 @@ async def cb_publish_main(callback: CallbackQuery) -> None:
         + f"\n\n✅ <b>Опубликовано в основной группе</b> (сообщение #{msg_id})"
     )
 
-    if config.SECONDARY_GROUP_ID:
+    if config.SECONDARY_TARGETS:
         async with async_session() as session:
             event = await get_event(session, event_id)
         secondary_preview = (
