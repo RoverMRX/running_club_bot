@@ -187,9 +187,9 @@ function ChallengeDetail({ id, onBack }) {
         )}
 
         {ch.deadline && (
-          <div style={{ marginTop: 4, fontSize: 12, color: ch.days_left === 0 ? "var(--danger)" : "var(--text-dim)" }}>
+          <div style={{ marginTop: 4, fontSize: 12, color: ch.days_left === 0 ? "var(--warning)" : "var(--text-dim)" }}>
             {ch.days_left !== null
-              ? ch.days_left === 0 ? "⏰ Истёк сегодня" : `⏳ ${ch.days_left} дн. до конца`
+              ? ch.days_left === 0 ? "⏰ Последний день!" : `⏳ ${ch.days_left} дн. до конца`
               : `До ${fmtDate(ch.deadline)}`}
           </div>
         )}
@@ -495,7 +495,7 @@ function ChallengeRow({ ch, onClick }) {
         {ch.is_active && <ProgressBar ch={ch} style={{ marginTop: 4 }} />}
         {ch.is_active && ch.days_left !== null && ch.days_left <= 3 && (
           <div style={{ fontSize: 11, color: ch.days_left === 0 ? "var(--danger)" : "#f0a000", marginTop: 2 }}>
-            {ch.days_left === 0 ? "⏰ Истёк" : `⏳ ${ch.days_left} дн. осталось`}
+            {ch.days_left === 0 ? "⏰ Последний день!" : `⏳ ${ch.days_left} дн. осталось`}
           </div>
         )}
       </div>
@@ -526,7 +526,7 @@ function CreateForm({ onSuccess }) {
     title: "", penalty: "", is_public: true,
     goal_runs: "", goal_value: "",
     min_per_run: "", min_minutes_per_run: "",
-    deadline: defaultDeadline(),
+    deadline: defaultDeadline(), has_deadline: false,
   });
   const [err, setErr] = useState("");
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -560,7 +560,7 @@ function CreateForm({ onSuccess }) {
       goal_value:          +form.goal_value   || 0,
       min_per_run:         +form.min_per_run  || 0,
       min_minutes_per_run: +form.min_minutes_per_run || 0,
-      deadline:            (chType === "weekly_runs" || chType === "race") && form.deadline
+      deadline:            (chType === "weekly_runs" || chType === "race") && form.deadline && (chType === "race" || form.has_deadline)
         ? dateInputToApi(form.deadline) : null,
     });
   };
@@ -624,10 +624,16 @@ function CreateForm({ onSuccess }) {
             <div className="hint" style={{ fontSize: 12, marginBottom: 12 }}>
               Условия объединяются через ИЛИ: засчитывается если выполнено любое из них
             </div>
-            <div className="form-group">
-              <label>Дедлайн (необязательно)</label>
-              <input value={form.deadline} onChange={set("deadline")} type="date" />
+            <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input type="checkbox" id="has_deadline" checked={!!form.has_deadline}
+                onChange={e => setForm(f => ({ ...f, has_deadline: e.target.checked, deadline: e.target.checked ? defaultDeadline() : "" }))} />
+              <label htmlFor="has_deadline" style={{ marginBottom: 0 }}>Установить дедлайн</label>
             </div>
+            {form.has_deadline && (
+              <div className="form-group">
+                <input value={form.deadline} onChange={set("deadline")} type="date" />
+              </div>
+            )}
           </>
         )}
 

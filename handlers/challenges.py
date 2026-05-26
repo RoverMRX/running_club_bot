@@ -360,10 +360,13 @@ async def step_enter_end(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
-    if deadline <= data["started_at"]:
-        await message.answer("Дата окончания должна быть позже даты старта:")
+    started = data["started_at"]
+    # Сравниваем по дате, игнорируя время — дедлайн сегодня допустим
+    if deadline.date() < started.date():
+        await message.answer("Дата окончания должна быть не раньше даты старта:")
         return
-
+    # Дедлайн = конец указанного дня
+    deadline = deadline.replace(hour=23, minute=59, second=59)
     await state.update_data(deadline=deadline)
     await state.set_state(ChallengeCreate.enter_penalty)
     await message.answer(

@@ -103,7 +103,11 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
 
     days_left: int | None = None
     if ch.deadline:
-        days_left = max(0, (ch.deadline - datetime.now()).days)
+        delta = ch.deadline - datetime.now()
+        # +1 чтобы "сегодня до 23:59" показывало 0, а не -1
+        days_left = max(0, delta.days if delta.seconds == 0 else delta.days + (1 if delta.days >= 0 else 0))
+        # Упрощённо: если дедлайн ещё не прошёл — минимум 0
+        days_left = max(0, (ch.deadline.date() - datetime.now().date()).days)
 
     # Заморожен ли сейчас
     is_paused = bool(ch.pause_until and ch.pause_until > datetime.now())
@@ -239,14 +243,17 @@ async def create_challenge(
 
     deadline: datetime | None = None
     if ch_type in _SPRINT_DAYS:
-        deadline = started_at + timedelta(days=_SPRINT_DAYS[ch_type])
+        d = started_at + timedelta(days=_SPRINT_DAYS[ch_type])
+        deadline = d.replace(hour=23, minute=59, second=59)
     elif ch_type in ("weekly_runs", "race") and body.get("deadline"):
         try:
             deadline = datetime.strptime(body["deadline"], "%d.%m.%Y")
         except ValueError:
             return OkResponse(ok=False, reason="Неверный формат даты. Используй ДД.ММ.ГГГГ")
-        if deadline < started_at:
+        if deadline.date() < started_at.date():
             return OkResponse(ok=False, reason="Дата не может быть в прошлом")
+        # Дедлайн = конец указанного дня
+        deadline = deadline.replace(hour=23, minute=59, second=59)
 
     if ch_type == "weekly_runs" and goal_runs <= 0:
         return OkResponse(ok=False, reason="Укажи количество пробежек в неделю")
