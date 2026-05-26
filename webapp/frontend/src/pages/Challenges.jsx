@@ -565,7 +565,7 @@ function CreateForm({ onSuccess }) {
       min_per_run:         +form.min_per_run  || 0,
       min_minutes_per_run: +form.min_minutes_per_run || 0,
       started_at:          form.started_at ? dateInputToApi(form.started_at) : null,
-      deadline:            (chType === "weekly_runs" || chType === "race") && form.deadline && (chType === "race" || form.has_deadline)
+      deadline:            chType === "weekly_runs" && form.has_deadline && form.deadline
         ? dateInputToApi(form.deadline) : null,
     });
   };
@@ -638,10 +638,12 @@ function CreateForm({ onSuccess }) {
             <div className="hint" style={{ fontSize: 12, marginBottom: 12 }}>
               Условия объединяются через ИЛИ: засчитывается если выполнено любое из них
             </div>
-            <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <input type="checkbox" id="has_deadline" checked={!!form.has_deadline}
                 onChange={e => setForm(f => ({ ...f, has_deadline: e.target.checked, deadline: e.target.checked ? defaultDeadline() : "" }))} />
-              <label htmlFor="has_deadline" style={{ marginBottom: 0 }}>Установить дедлайн</label>
+              <label htmlFor="has_deadline" style={{ fontSize: 13, cursor: "pointer", margin: 0 }}>
+                Установить дедлайн
+              </label>
             </div>
             {form.has_deadline && (
               <div className="form-group">
@@ -659,9 +661,8 @@ function CreateForm({ onSuccess }) {
         )}
 
         {isRace && (
-          <div className="form-group">
-            <label>Дедлайн *</label>
-            <input value={form.deadline} onChange={set("deadline")} type="date" />
+          <div className="hint" style={{ fontSize: 12, marginBottom: 12 }}>
+            ⏱ Дедлайн = дата забега + 1 день на отчёт и апрув
           </div>
         )}
 
