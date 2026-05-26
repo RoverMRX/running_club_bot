@@ -36,7 +36,11 @@ def get_type_name(ch_type: str) -> str:
 
 def _calc_deadline(ch_type: str, started_at: datetime) -> datetime | None:
     days = _SPRINT_DAYS.get(ch_type)
-    return started_at + timedelta(days=days) if days else None
+    if not days:
+        return None
+    target = started_at + timedelta(days=days)
+    # Дедлайн — конец дня 23:59:59, а не момент создания
+    return target.replace(hour=23, minute=59, second=59, microsecond=0)
 
 
 async def create_challenge(

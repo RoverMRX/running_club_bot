@@ -388,18 +388,20 @@ async def _send_pending_notifications(bot) -> None:
                     except Exception:
                         kb = None
 
+                # thread_id=1 — это General топик, Telegram не принимает его явно
                 await bot.send_message(
                     notif.user_tg_id,
                     notif.text,
                     reply_markup=kb,
-                    message_thread_id=thread_id,
+                    message_thread_id=thread_id if (thread_id and thread_id != 1) else None,
                     parse_mode="HTML",
                 )
                 notif.sent = True
             except Exception as e:
                 import logging
                 logging.getLogger("scheduler").warning(
-                    f"Не удалось отправить уведомление {notif.id}: {e}"
+                    f"Не удалось отправить уведомление {notif.id}: {e} "
+                    f"[chat={notif.user_tg_id}, thread={thread_id}]"
                 )
 
         await session.commit()
