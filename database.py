@@ -70,6 +70,8 @@ async def init_db() -> None:
     await _migrate_participants_to_children()
     # Заполняем справочник ачивментов (идемпотентно)
     await _seed_achievements()
+    # Ретроактивно выдаём ачивки по историческим данным
+    await _backfill_achievements()
 
 
 async def _migrate_participants_to_children() -> None:
@@ -230,3 +232,122 @@ async def _seed_achievements() -> None:
                     }
                 )
         await session.commit()
+
+
+async def _backfill_achievements() -> None:
+    """
+    Ретроактивно выдаёт ачивки по существующим данным.
+    Запускается при каждом старте, но идемпотентна — не дублирует.
+    """
+    import logging as _log
+    logger = _log.getLogger("database")
+
+    async with async_session() as session:
+        # Получаем всех пользователей у кого есть одобренные отчёты
+        from sqlalchemy import select as _sel, func as _func
+        users_res = await session.execute(
+            text("SELECT DISTINCT user_tg_id FROM reports WHERE is_approved=1")
+        )
+        user_ids = [r[0] for r in users_res.fetchall()]
+
+    if not user_ids:
+        return
+
+    logger.info("Backfill ачивментов для %d пользователей", len(user_ids))
+
+    from services.achievements import check_and_grant as _check
+    from models import User as _User, Report as _Report, UserAchievement as _UA
+
+    for uid in user_ids:
+        try:
+            async with async_session() as session:
+                # Суммарный пробег
+                total_res = await session.execute(
+                    text("SELECT COALESCE(SUM(km),0) FROM reports WHERE user_tg_id=:u AND is_approved=1"),
+                    {"u": uid}
+                )
+                total_km = float(total_res.scalar() or 0)
+
+                # Максимальная пробежка
+                max_res = await session.execute(
+                    text("SELECT COALESCE(MAX(km),0) FROM reports WHERE user_tg_id=:u AND is_approved=1"),
+                    {"u": uid}
+                )
+                max_km = float(max_res.scalar() or 0)
+
+                # Стрик
+                user_res = await session.execute(
+                    text("SELECT streak FROM users WHERE tg_id=:u"), {"u": uid}
+                )
+                row = user_res.fetchone()
+                streak = int(row[0] or 0) if row else 0
+
+                # Кол-во отчётов
+                cnt_res = await session.execute(
+                    text("SELECT COUNT(*) FROM reports WHERE user_tg_id=:u AND is_approved=1"),
+                    {"u": uid}
+                )
+                report_count = cnt_res.scalar() or 0
+
+                # Ранние/ночные/зимние пробежки из created_at
+                early_res = await session.execute(
+                    text("SELECT COUNT(*) FROM reports WHERE user_tg_id=:u AND is_approved=1 AND CAST(strftime('%H', created_at) AS INT) < 7"),
+                    {"u": uid}
+                )
+                has_early = (early_res.scalar() or 0) > 0
+
+                night_res = await session.execute(
+                    text("SELECT COUNT(*) FROM reports WHERE user_tg_id=:u AND is_approved=1 AND CAST(strftime('%H', created_at) AS INT) >= 22"),
+                    {"u": uid}
+                )
+                has_night = (night_res.scalar() or 0) > 0
+
+                winter_res = await session.execute(
+                    text("SELECT COUNT(*) FROM reports WHERE user_tg_id=:u AND is_approved=1 AND CAST(strftime('%m', created_at) AS INT) IN (12,1,2)"),
+                    {"u": uid}
+                )
+                has_winter = (winter_res.scalar() or 0) > 0
+
+                # Уже выданные ачивки
+                earned_res = await session.execute(
+                    text("SELECT slug FROM user_achievements WHERE user_tg_id=:u"), {"u": uid}
+                )
+                already = {r[0] for r in earned_res.fetchall()}
+
+            # Выдаём недостающие
+            to_grant = []
+
+            for threshold, slug in [(1,"km_1"),(10,"km_10"),(100,"km_100"),(500,"km_500"),(1000,"km_1000"),(5000,"km_5000")]:
+                if total_km >= threshold and slug not in already:
+                    to_grant.append(slug)
+
+            for threshold, slug in [(5,"pr_5"),(10,"pr_10"),(21.1,"pr_half"),(42.2,"pr_marathon")]:
+                if max_km >= threshold and slug not in already:
+                    to_grant.append(slug)
+
+            for weeks, slug in [(1,"streak_1"),(4,"streak_4"),(12,"streak_12"),(24,"streak_24"),(52,"streak_52")]:
+                if streak >= weeks and slug not in already:
+                    to_grant.append(slug)
+
+            if report_count >= 1 and "first_report" not in already:
+                to_grant.append("first_report")
+            if has_early and "early_bird" not in already:
+                to_grant.append("early_bird")
+            if has_night and "night_owl" not in already:
+                to_grant.append("night_owl")
+            if has_winter and "winter_run" not in already:
+                to_grant.append("winter_run")
+
+            if to_grant:
+                async with async_session() as session:
+                    async with session.begin():
+                        for slug in to_grant:
+                            session.add(__import__('models').UserAchievement(
+                                user_tg_id=uid, slug=slug
+                            ))
+                logger.info("Backfill: выдано %d ачивок для %s", len(to_grant), uid)
+
+        except Exception as e:
+            logger.warning("Backfill error for %s: %s", uid, e)
+
+    logger.info("Backfill ачивментов завершён")
