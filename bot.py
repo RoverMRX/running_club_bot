@@ -72,8 +72,23 @@ async def main() -> None:
     print(f"   Часовой пояс планировщика: Asia/Omsk")
     print(f"   Mini App: {WEBAPP_URL}")
 
+    # Retry delete_webhook — прокси может быть временно недоступен
+    import asyncio as _asyncio
+    for attempt in range(10):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            break
+        except Exception as e:
+            if attempt < 9:
+                wait = 5 * (attempt + 1)
+                logging.getLogger("__main__").warning(
+                    "delete_webhook failed (%s), retry in %ds...", e, wait
+                )
+                await _asyncio.sleep(wait)
+            else:
+                logging.getLogger("__main__").error("delete_webhook failed after 10 attempts: %s", e)
+
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown()
