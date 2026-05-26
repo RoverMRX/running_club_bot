@@ -327,10 +327,12 @@ function ChallengeDetail({ id, onBack }) {
               );
             })()}
 
-            {!ch.is_owner && !ch.is_participant && !ch.is_child && ch.author_nick && (
+            {!ch.is_owner && !ch.is_participant &&
+             (!ch.is_child || (ch.is_child && ch.result)) &&
+             ch.author_nick && (
               !showJoinForm ? (
                 <button className="btn btn-primary" onClick={() => setShowJoinForm(true)}>
-                  Присоединиться
+                  {ch.is_child && ch.result ? "🔄 Попробовать снова" : "Присоединиться"}
                 </button>
               ) : null
             )}
@@ -417,7 +419,8 @@ function ChallengeDetail({ id, onBack }) {
         </div>
       )}
 
-      {showJoinForm && ch.is_active && !ch.is_owner && !ch.is_participant && (
+      {showJoinForm && ch.is_active && !ch.is_owner && !ch.is_participant &&
+       (!ch.is_child || (ch.is_child && ch.result)) && (
         <div className="card" style={{ marginTop: 0 }}>
           <div className="form-group">
             <label>Твоя ставка (необязательно)</label>
@@ -444,26 +447,65 @@ function ChallengeDetail({ id, onBack }) {
       {/* Участники */}
       {ch.participants.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: "hidden", marginTop: 0 }}>
-          <div style={{ padding: "10px 16px 0", fontSize: 12, fontWeight: 500,
+          <div style={{ padding: "10px 16px 8px", fontSize: 12, fontWeight: 500,
             textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-muted)" }}>
             Участники ({ch.participants.length})
           </div>
-          {ch.participants.map((p, i) => (
-            <div key={p.user_id} style={{
-              display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
-              borderBottom: i < ch.participants.length - 1 ? "1px solid var(--border)" : "none",
-            }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>{p.school_nick}</div>
-                {p.penalty && <div className="hint" style={{ fontSize: 12 }}>Ставка: {p.penalty}</div>}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "right" }}>
-                {ch.ch_type === "weekly_runs"
-                  ? `${p.current_runs} пробежек`
-                  : `${p.current_value.toFixed(1)} км`}
-              </div>
-            </div>
-          ))}
+          {[...ch.participants]
+            .sort((a, b) => (ch.ch_type === "weekly_runs"
+              ? b.current_runs - a.current_runs
+              : b.current_value - a.current_value))
+            .map((p, i) => {
+              const val = ch.ch_type === "weekly_runs" ? p.current_runs : p.current_value;
+              const goal = ch.ch_type === "weekly_runs" ? ch.goal_runs : ch.goal_value;
+              const pct = goal > 0 ? Math.min(100, Math.round(val / goal * 100)) : 0;
+              const medals = ["🥇","🥈","🥉"];
+              const statusColor = p.result === "completed" ? "var(--success)"
+                : p.result === "failed" ? "var(--danger)"
+                : p.result === "closed" ? "var(--text-muted)" : null;
+              const statusLabel = p.result === "completed" ? "✅ выполнен"
+                : p.result === "failed" ? "🏳️ сдался"
+                : p.result === "closed" ? "🏁 закрыт" : null;
+              return (
+                <div key={p.user_id} style={{
+                  padding: "10px 16px",
+                  borderBottom: i < ch.participants.length - 1 ? "1px solid var(--border)" : "none",
+                  opacity: p.result ? 0.7 : 1,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 14, minWidth: 20 }}>
+                      {medals[i] || `${i+1}.`}
+                    </span>
+                    <span style={{ fontWeight: 500, fontSize: 14, flex: 1 }}>{p.school_nick}</span>
+                    <span style={{ fontSize: 13, color: statusColor || "var(--text-muted)", fontWeight: 500 }}>
+                      {ch.ch_type === "weekly_runs"
+                        ? `${p.current_runs} / ${ch.goal_runs} бег`
+                        : `${p.current_value.toFixed(1)} / ${goal.toFixed(1)} км`}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, minWidth: 20 }} />
+                    <div style={{ flex: 1 }}>
+                      <div className="progress-wrap" style={{ height: 4 }}>
+                        <div className="progress-fill" style={{
+                          width: `${pct}%`,
+                          background: p.result === "completed" ? "var(--success)"
+                            : p.result === "failed" ? "var(--danger)" : undefined
+                        }} />
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 11, color: "var(--text-dim)", minWidth: 30, textAlign: "right" }}>
+                      {statusLabel || `${pct}%`}
+                    </span>
+                  </div>
+                  {p.penalty && (
+                    <div style={{ fontSize: 11, color: "var(--warning)", marginTop: 2, marginLeft: 28 }}>
+                      💰 {p.penalty}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         </div>
       )}
     </div>
