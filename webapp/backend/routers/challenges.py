@@ -78,6 +78,26 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
     my_current_runs  = 0
 
     if ch.parent_id is None:
+        # Автор — первый участник (его прогресс хранится в самом Challenge)
+        author_user_res = await db.execute(select(User).where(User.tg_id == ch.user_id))
+        author_user = author_user_res.scalar_one_or_none()
+        if author_user:
+            if viewer_id and viewer_id == ch.user_id:
+                is_participant = True
+                my_current_value = ch.current_value or 0.0
+                my_current_runs  = ch.current_runs  or 0
+            participants.append(ChallengeParticipantOut(
+                user_id=author_user.tg_id,
+                username=author_user.username,
+                school_nick=author_user.school_nick,
+                penalty=ch.penalty,
+                current_runs=ch.current_runs or 0,
+                current_value=ch.current_value or 0.0,
+                result=ch.result,
+                close_requested=bool(ch.close_requested),
+                pause_requested=bool(ch.pause_requested),
+            ))
+
         children_res = await db.execute(
             select(Challenge, User)
             .join(User, User.tg_id == Challenge.user_id)
@@ -85,7 +105,8 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
             .order_by(Challenge.created_at)
         )
         for child, u in children_res.all():
-            if viewer_id and u.tg_id == viewer_id:
+            # is_participant=True только если дочерний активен (не сдался)
+            if viewer_id and u.tg_id == viewer_id and child.is_active:
                 is_participant = True
                 my_current_value = child.current_value or 0.0
                 my_current_runs  = child.current_runs  or 0

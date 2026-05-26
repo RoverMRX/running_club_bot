@@ -531,10 +531,13 @@ async def cmd_manage_challenges(message: Message) -> None:
     from database import async_session as _sess
 
     async with _sess() as session:
-        # Показываем все корневые челленджи (parent_id IS NULL)
+        # Показываем только активные корневые челленджи
         res = await session.execute(
-            _sel(_Ch).where(_Ch.parent_id.is_(None))
-            .order_by(_Ch.is_active.desc(), _Ch.created_at.desc())
+            _sel(_Ch).where(
+                _Ch.parent_id.is_(None),
+                _Ch.is_active == True,
+            )
+            .order_by(_Ch.created_at.desc())
             .limit(30)
         )
         challenges = res.scalars().all()
