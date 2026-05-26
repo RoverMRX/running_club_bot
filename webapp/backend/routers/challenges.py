@@ -101,15 +101,27 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         children_res = await db.execute(
             select(Challenge, User)
             .join(User, User.tg_id == Challenge.user_id)
-            .where(Challenge.parent_id == ch.id)
-            .order_by(Challenge.created_at)
+            .where(
+                Challenge.parent_id == ch.id,
+                Challenge.user_id != ch.user_id,  # автор уже добавлен отдельно
+            )
+            .order_by(Challenge.is_active.desc(), Challenge.created_at.desc())
         )
+        # Для каждого user_id берём только одну запись: активную если есть, иначе последнюю
+        seen_users: set[int] = set()
+        viewer_has_left = False
         for child, u in children_res.all():
-            # is_participant=True только если дочерний активен (не сдался)
-            if viewer_id and u.tg_id == viewer_id and child.is_active:
-                is_participant = True
-                my_current_value = child.current_value or 0.0
-                my_current_runs  = child.current_runs  or 0
+            if u.tg_id in seen_users:
+                continue
+            seen_users.add(u.tg_id)
+
+            if viewer_id and u.tg_id == viewer_id:
+                if child.is_active:
+                    is_participant = True
+                    my_current_value = child.current_value or 0.0
+                    my_current_runs  = child.current_runs  or 0
+                elif child.result in ("failed", "closed"):
+                    viewer_has_left = True
             participants.append(ChallengeParticipantOut(
                 user_id=u.tg_id, username=u.username, school_nick=u.school_nick,
                 penalty=child.penalty,
@@ -151,6 +163,7 @@ async def _enrich_challenge(ch: Challenge, db: AsyncSession, viewer_id: int | No
         viewer_id=viewer_id,
         parent_id=ch.parent_id,
         is_child=is_child,
+        viewer_has_left=viewer_has_left if ch.parent_id is None else False,
         participants=participants,
     )
 

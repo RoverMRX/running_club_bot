@@ -60,6 +60,7 @@ class ChallengeOut(BaseModel):
     author_nick:         str
     is_owner:            bool = False
     is_participant:      bool = False
+    viewer_has_left:     bool = False   # был участником, но сдался/вышел
     days_left:           int | None = None
     is_paused:           bool = False        # заморожен прямо сейчас
     close_requested:     bool = False        # автор попросил закрыть

@@ -332,7 +332,8 @@ function ChallengeDetail({ id, onBack }) {
              ch.author_nick && (
               !showJoinForm ? (
                 <button className="btn btn-primary" onClick={() => setShowJoinForm(true)}>
-                  {ch.is_child && ch.result ? "🔄 Попробовать снова" : "Присоединиться"}
+                  {(ch.viewer_has_left || (ch.is_child && ch.result))
+                    ? "🔄 Попробовать снова" : "Присоединиться"}
                 </button>
               ) : null
             )}
@@ -420,7 +421,7 @@ function ChallengeDetail({ id, onBack }) {
       )}
 
       {showJoinForm && ch.is_active && !ch.is_owner && !ch.is_participant &&
-       (!ch.is_child || (ch.is_child && ch.result)) && (
+       (!ch.is_child || (ch.is_child && ch.result) || ch.viewer_has_left) && (
         <div className="card" style={{ marginTop: 0 }}>
           <div className="form-group">
             <label>Твоя ставка (необязательно)</label>
