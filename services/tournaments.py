@@ -205,7 +205,7 @@ async def _retroactive_score(tournament_id: int, user_tg_id: int) -> None:
             select(Report).where(
                 Report.user_tg_id == user_tg_id,
                 Report.is_approved == True,
-                Report.created_at >= tournament.started_at,
+                Report.created_at >= tournament.start_date,
             )
         )
         reports = reports_res.scalars().all()

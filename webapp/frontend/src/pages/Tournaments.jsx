@@ -27,7 +27,7 @@ function fmtScore(score, type) {
 
 const MEDAL_COLORS = ["#f0c040", "#a0a0a0", "#cd7f32"];
 
-function Leaderboard({ leaderboard, type }) {
+function Leaderboard({ leaderboard, type, onUserClick }) {
   if (leaderboard.length === 0) return (
     <div className="hint" style={{ textAlign: "center", padding: "12px 0", fontSize: 13 }}>
       Пока никто не участвует
@@ -37,10 +37,13 @@ function Leaderboard({ leaderboard, type }) {
   return (
     <div>
       {leaderboard.map(row => (
-        <div key={row.user_tg_id} style={{
-          display: "flex", alignItems: "center", gap: 10,
-          padding: "7px 0", borderBottom: "1px solid var(--border)",
-        }}>
+        <div key={row.user_tg_id}
+          onClick={() => onUserClick && onUserClick(row.user_tg_id)}
+          style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "7px 0", borderBottom: "1px solid var(--border)",
+            cursor: onUserClick ? "pointer" : "default",
+          }}>
           <div style={{
             width: 24, fontWeight: 700, fontSize: 14, textAlign: "center",
             color: MEDAL_COLORS[row.position - 1] || "var(--text-dim)",
@@ -104,6 +107,7 @@ function TournamentCard({ t, onUserClick }) {
           <Leaderboard
             leaderboard={expanded ? t.leaderboard : t.leaderboard.slice(0, 3)}
             type={t.tournament_type}
+            onUserClick={onUserClick}
           />
           {t.leaderboard.length > 3 && (
             <button
