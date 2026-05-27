@@ -124,7 +124,8 @@ _CANCEL_TEXTS = {"❌ Отмена", "🚫 Отмена", "Отмена", "/canc
 @router.message(StateFilter(TourCreate), F.text.in_(_CANCEL_TEXTS))
 async def tour_cancel_text(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("❌ Создание турнира отменено.", reply_markup=ReplyKeyboardRemove())
+    from keyboards import get_admin_main_kb
+    await message.answer("❌ Создание турнира отменено.", reply_markup=get_admin_main_kb())
 
 
 @router.callback_query(StateFilter(TourCreate), F.data == "tour_cancel")
@@ -289,6 +290,9 @@ async def tour_step_confirm(cb: CallbackQuery, state: FSMContext) -> None:
         f"Тип: {type_label}\n"
         f"Завершается: {end_str}"
     )
+    # Возвращаем клавиатуру после завершения FSM
+    from keyboards import get_admin_main_kb
+    await cb.message.answer("✅ Готово!", reply_markup=get_admin_main_kb())
     await cb.answer("Турнир создан! 🏆")
 
     # Анонс в группу

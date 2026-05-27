@@ -400,3 +400,19 @@ async def msg_cancel(message: types.Message, state: FSMContext):
 async def cb_noop(callback: types.CallbackQuery):
     """Пустой callback — ничего не делаем."""
     await callback.answer()
+
+# ─────────────────────────────────────────
+# Fallback — восстановить клавиатуру
+# ─────────────────────────────────────────
+
+@router.message(F.chat.type == "private", StateFilter(None))
+async def fallback_restore_kb(message: types.Message):
+    """
+    Если пользователь написал что-то неизвестное вне FSM — тихо восстанавливаем клавиатуру.
+    Это решает проблему когда клавиатура пропадает после inline-действий.
+    """
+    # Не реагируем на команды — они обрабатываются выше
+    if message.text and message.text.startswith("/"):
+        return
+    kb = await main_kb_for(message.from_user.id)
+    await message.answer("Главное меню", reply_markup=kb)
