@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getProfile, getLeaderboard, getAchievements, getInitData } from "../api";
+import PublicProfile from "./PublicProfile";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 
@@ -218,7 +219,7 @@ function PillBar({ options, value, onChange }) {
   );
 }
 
-function LeaderRow({ u, i, sortBy }) {
+function LeaderRow({ u, i, sortBy, onUserClick }) {
   const medalColors = ["#f0c040","#aaa","#cd7f32"];
   let metric = `${u.xp} XP`;
   let sub    = `Ур. ${u.level} · стрик ${u.streak}`;
@@ -226,10 +227,11 @@ function LeaderRow({ u, i, sortBy }) {
   if (sortBy === "runs" && u.runs != null) { metric = `${u.runs} бег`; sub = `${u.km?.toFixed(1) ?? "—"} км · ${u.xp} XP`; }
   if (sortBy === "streak")                { metric = `${u.streak} нед`; sub = `${u.xp} XP · Ур. ${u.level}`; }
   return (
-    <div style={{
+    <div onClick={() => onUserClick && onUserClick(u.tg_id)} style={{
       display:"flex", alignItems:"center", gap:12,
       padding:"12px 16px",
       borderBottom: "1px solid var(--border)",
+      cursor: onUserClick ? "pointer" : "default",
     }}>
       <div style={{
         width:28, textAlign:"center",
@@ -251,7 +253,7 @@ function LeaderRow({ u, i, sortBy }) {
   );
 }
 
-function Leaderboard({ data, period, setPeriod, sortBy, setSortBy }) {
+function Leaderboard({ data, period, setPeriod, sortBy, setSortBy, onUserClick }) {
   return (
     <div>
       <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
@@ -262,7 +264,7 @@ function Leaderboard({ data, period, setPeriod, sortBy, setSortBy }) {
         {data.length === 0 ? (
           <div style={{ padding:24, textAlign:"center", color:"var(--text-muted)" }}>Нет данных за этот период</div>
         ) : data.map((u, i) => (
-          <LeaderRow key={u.tg_id} u={u} i={i} sortBy={sortBy} />
+          <LeaderRow key={u.tg_id} u={u} i={i} sortBy={sortBy} onUserClick={onUserClick} />
         ))}
       </div>
     </div>
@@ -290,10 +292,11 @@ function useInitDataReady() {
 }
 
 export default function Profile() {
-  const [tab, setTab]       = useState("profile");
-  const [period, setPeriod] = useState("alltime");
-  const [sortBy, setSortBy] = useState("xp");
+  const [tab, setTab]           = useState("profile");
+  const [period, setPeriod]     = useState("alltime");
+  const [sortBy, setSortBy]     = useState("xp");
   const [achModal, setAchModal] = useState(null);
+  const [viewUser, setViewUser] = useState(null); // tg_id открытого профиля
   const initReady = useInitDataReady();
 
   const profileQ = useQuery({
@@ -319,6 +322,9 @@ export default function Profile() {
 
   if (!initReady || profileQ.isLoading) return <Loader />;
   if (profileQ.isError) return <ErrorMessage error={profileQ.error} />;
+
+  // Публичный профиль другого пользователя
+  if (viewUser) return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
 
   return (
     <div>
@@ -360,7 +366,8 @@ export default function Profile() {
         leaderQ.isError   ? <ErrorMessage error={leaderQ.error} /> :
         <Leaderboard data={leaderQ.data ?? []}
           period={period} setPeriod={p => { setPeriod(p); }}
-          sortBy={sortBy} setSortBy={s => { setSortBy(s); }} />
+          sortBy={sortBy} setSortBy={s => { setSortBy(s); }}
+          onUserClick={setViewUser} />
       )}
     </div>
   );

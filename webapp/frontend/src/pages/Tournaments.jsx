@@ -150,7 +150,7 @@ function TournamentCard({ t }) {
   );
 }
 
-function TournamentList({ queryKey, queryFn, emptyText, emptyHint }) {
+function TournamentList({ queryKey, queryFn, emptyText, emptyHint, onUserClick }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [queryKey],
     queryFn,
@@ -176,11 +176,14 @@ function TournamentList({ queryKey, queryFn, emptyText, emptyHint }) {
     </div>
   );
 
-  return <div>{data.map(t => <TournamentCard key={t.id} t={t} />)}</div>;
+  return <div>{data.map(t => <TournamentCard key={t.id} t={t} onUserClick={onUserClick} />)}</div>;
 }
 
 export default function Tournaments() {
-  const [tab, setTab] = useState("active");
+  const [tab, setTab]       = useState("active");
+  const [viewUser, setViewUser] = useState(null);
+
+  if (viewUser) return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
 
   return (
     <div>
@@ -199,6 +202,7 @@ export default function Tournaments() {
           queryFn={getTournaments}
           emptyText="Нет активных турниров"
           emptyHint="Турниры создаёт администратор клуба"
+          onUserClick={setViewUser}
         />
       )}
       {tab === "archive" && (
@@ -206,6 +210,7 @@ export default function Tournaments() {
           queryKey="tournaments-archive"
           queryFn={getTournamentsArchive}
           emptyText="Архив пуст"
+          onUserClick={setViewUser}
         />
       )}
     </div>

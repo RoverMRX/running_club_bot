@@ -205,3 +205,44 @@ async def get_achievements(
     """Все ачивки с флагом earned для текущего пользователя."""
     from services.achievements import get_user_achievements
     return await get_user_achievements(tg_user["id"])
+
+
+@router.get("/user/{tg_id}")
+async def get_public_profile(
+    tg_id: int,
+    tg_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Публичный профиль любого пользователя — для просмотра из лидерборда/событий."""
+    u_res = await db.execute(select(User).where(User.tg_id == tg_id))
+    user = u_res.scalar_one_or_none()
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    from services.achievements import get_user_achievements
+    achievements = await get_user_achievements(tg_id)
+
+    # Статистика
+    from sqlalchemy import text as _text
+    stats_res = await db.execute(
+        _text("SELECT COUNT(*), COALESCE(SUM(km),0), COALESCE(MAX(km),0) FROM reports WHERE user_tg_id=:u AND is_approved=1"),
+        {"u": tg_id}
+    )
+    row = stats_res.fetchone()
+
+    progress = xp_progress(user.xp)
+
+    return {
+        "tg_id":       user.tg_id,
+        "username":    user.username,
+        "school_nick": user.school_nick,
+        "full_name":   user.full_name,
+        "xp":          user.xp,
+        "level":       progress["level"],
+        "streak":      user.streak,
+        "total_runs":  row[0] or 0,
+        "total_km":    round(float(row[1] or 0), 2),
+        "best_km":     round(float(row[2] or 0), 2),
+        "achievements": achievements,
+    }

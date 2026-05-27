@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PublicProfile from "./PublicProfile";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getMyChallenges, getMyChallengesHistory,
@@ -133,6 +134,7 @@ function ChallengeDetail({ id, onBack }) {
   const [showSurrender, setShowSurrender] = useState(false);
   const [surrenderCountdown, setSurrenderCountdown] = useState(0);
   const surrenderTimer = useRef(null);
+  const [viewUser, setViewUser] = useState(null);
 
   const { data: ch, isLoading, isError, error } = useQuery({
     queryKey: ["challenge", id],
@@ -158,6 +160,7 @@ function ChallengeDetail({ id, onBack }) {
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
+  if (viewUser)  return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
 
   const pct = progressPct(ch);
 
@@ -468,10 +471,13 @@ function ChallengeDetail({ id, onBack }) {
                 : p.result === "failed" ? "🏳️ сдался"
                 : p.result === "closed" ? "🏁 закрыт" : null;
               return (
-                <div key={p.user_id} style={{
+                <div key={p.user_id}
+                onClick={() => setViewUser(p.user_id)}
+                style={{
                   padding: "10px 16px",
                   borderBottom: i < ch.participants.length - 1 ? "1px solid var(--border)" : "none",
                   opacity: p.result ? 0.7 : 1,
+                  cursor: "pointer",
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                     <span style={{ fontSize: 14, minWidth: 20 }}>
@@ -762,6 +768,7 @@ function ChallengeList({ queryKey, queryFn, paginated = false, emptyText }) {
   );
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
+  if (viewUser)  return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
   if (!data?.length) return (
     <div className="empty-state">
       <div className="empty-icon">

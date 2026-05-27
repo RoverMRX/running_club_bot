@@ -1,114 +1,260 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getTournaments, joinTournament } from "../api";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { getReports, getMyReports, getMyStats } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-const TYPE_LABELS = { km: "Километры", minutes: "Минуты", days: "Дни", team_km: "Командные км" };
+// ─── Утилиты ─────────────────────────────────────────────────
 
-function fmt(dt) {
-  return new Date(dt).toLocaleString("ru", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+function fmtDate(dt) {
+  return new Date(dt).toLocaleString("ru", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
 }
 
-function fmtScore(score, type) {
-  if (type === "km" || type === "team_km") return `${score.toFixed(1)} км`;
-  if (type === "minutes") return `${Math.round(score)} мин`;
-  if (type === "days")    return `${Math.round(score)} дн`;
-  return String(score);
+/** Форматирует секунды → ЧЧ:ММ:СС или ММ:СС */
+function fmtDuration(sec) {
+  if (!sec) return null;
+  const h  = Math.floor(sec / 3600);
+  const mn = Math.floor((sec % 3600) / 60);
+  const sc = sec % 60;
+  if (h > 0) return `${h}:${String(mn).padStart(2, "0")}:${String(sc).padStart(2, "0")}`;
+  return `${mn}:${String(sc).padStart(2, "0")}`;
 }
 
-function TournamentCard({ t }) {
-  const qc = useQueryClient();
-  const joinMut = useMutation({ mutationFn: () => joinTournament(t.id), onSuccess: () => qc.invalidateQueries(["tournaments"]) });
+// ─── Одна карточка отчёта ─────────────────────────────────────
 
-  const now = new Date();
-  const end = new Date(t.end_date);
-  const h   = Math.max(0, Math.round((end - now) / 3_600_000));
-  const d   = Math.floor(h / 24);
-  const timeStr = d > 0 ? `${d} дн` : `${h} ч`;
+function ReportCard({ r, showAuthor = true }) {
+  const timeStr = fmtDuration(r.duration_sec);
 
-  // Цвета мест (строго, без золота)
-  const posStyle = [
-    { color: "#c8b560" },
-    { color: "#909090" },
-    { color: "#9e7240" },
-  ];
+  let statusBadge;
+  if (r.is_approved) {
+    statusBadge = (
+      <span className="badge badge-active" style={{ fontSize: 11 }}>✅ Одобрен</span>
+    );
+  } else if (r.is_rejected) {
+    statusBadge = (
+      <span className="badge" style={{ background: "var(--danger)", fontSize: 11 }}>❌ Отклонён</span>
+    );
+  } else {
+    statusBadge = (
+      <span className="badge" style={{ background: "var(--warning)", fontSize: 11 }}>⏳ На проверке</span>
+    );
+  }
 
   return (
-    <div className="card">
+    <div className="card" style={{ padding: "12px 16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-        <h2 style={{ margin: 0, flex: 1 }}>{t.title}</h2>
-        {t.is_active
-          ? <span className="badge badge-active">{timeStr}</span>
-          : <span className="badge">Завершён</span>
-        }
-      </div>
-      <div className="hint" style={{ fontSize: 12, marginBottom: 4 }}>{TYPE_LABELS[t.tournament_type]}</div>
-      <div className="hint" style={{ fontSize: 11 }}>{fmt(t.start_date)} — {fmt(t.end_date)}</div>
-
-      {t.leaderboard.length > 0 && (
-        <>
-          <div className="divider" />
-          <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-muted)", marginBottom: 8 }}>
-            Таблица
-          </div>
-          {t.leaderboard.map((row) => (
-            <div key={row.user_tg_id} style={{
-              display: "flex", alignItems: "center", gap: 10, padding: "6px 0",
-              borderBottom: "1px solid var(--border)",
-            }}>
-              <div style={{ width: 24, fontWeight: 700, fontSize: 13, ...(posStyle[row.position - 1] || { color: "var(--text-dim)" }) }}>
-                {row.position}
-              </div>
-              <div style={{ flex: 1, fontSize: 14 }}>{row.school_nick}</div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{fmtScore(row.score, t.tournament_type)}</div>
+        <div>
+          {showAuthor && (
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
+              {r.username ? `@${r.username}` : r.school_nick}
             </div>
-          ))}
-        </>
-      )}
-
-      {t.leaderboard.length === 0 && (
-        <div className="hint" style={{ textAlign: "center", padding: "12px 0", fontSize: 13 }}>Пока никто не участвует</div>
-      )}
-
-      {t.is_active && (
-        <div style={{ marginTop: 12 }}>
-          {t.user_joined
-            ? <div className="btn btn-secondary" style={{ cursor: "default", opacity: 0.6 }}>Ты участвуешь</div>
-            : <button className="btn btn-primary" disabled={joinMut.isPending} onClick={() => joinMut.mutate()}>
-                {joinMut.isPending ? "..." : "Принять вызов"}
-              </button>
-          }
+          )}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)" }}>
+              {r.km.toFixed(1)}
+            </span>
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>км</span>
+            {timeStr && (
+              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                ⏱ {timeStr}
+              </span>
+            )}
+          </div>
         </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          {statusBadge}
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+            {fmtDate(r.created_at)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Главный компонент ────────────────────────────────────────
+
+
+// ─── График статистики ────────────────────────────────────────
+
+function StatsBlock() {
+  const [view, setView] = useState("weekly"); // "daily" | "weekly"
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["reports-stats"],
+    queryFn: getMyStats,
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return <Loader />;
+  if (isError || !data) return null;
+
+  const chartData = view === "weekly"
+    ? data.weekly.map(w => ({ label: w.week.replace(/.*-W/, "нед "), km: w.km, runs: w.runs }))
+    : data.daily.map(d => ({
+        label: new Date(d.date).toLocaleDateString("ru", { day: "2-digit", month: "2-digit" }),
+        km: d.km, runs: d.runs,
+      }));
+
+  const maxKm = Math.max(...chartData.map(d => d.km), 1);
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      {/* Итоги */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
+        {[
+          { label: "Пробежек",   value: data.total_runs },
+          { label: "Всего км",   value: data.total_km.toFixed(1) },
+          { label: "Лучшая",     value: `${data.best_km.toFixed(1)} км` },
+          { label: "Средняя",    value: `${data.avg_km.toFixed(1)} км` },
+        ].map(s => (
+          <div key={s.label} style={{ textAlign: "center" }}>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Переключатель */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[["weekly","По неделям"],["daily","По дням"]].map(([v, l]) => (
+          <button key={v} onClick={() => setView(v)}
+            style={{
+              fontSize: 12, padding: "4px 10px", borderRadius: 20, cursor: "pointer",
+              border: "1px solid var(--border)",
+              background: view === v ? "var(--accent)" : "var(--bg-input)",
+              color: view === v ? "#000" : "var(--text)",
+              fontWeight: view === v ? 600 : 400,
+            }}>{l}</button>
+        ))}
+      </div>
+
+      {/* График */}
+      {chartData.length === 0 ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: "20px 0" }}>
+          Нет данных
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={160}>
+          <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text-dim)" }}
+              interval="preserveStartEnd" />
+            <YAxis tick={{ fontSize: 10, fill: "var(--text-dim)" }} />
+            <Tooltip
+              formatter={(val) => [`${val} км`, "Пробег"]}
+              contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+                borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: "var(--text-muted)" }}
+            />
+            <Bar dataKey="km" radius={[4, 4, 0, 0]}>
+              {chartData.map((entry, i) => (
+                <Cell key={i}
+                  fill={entry.km >= maxKm * 0.8 ? "var(--accent)" : "rgba(224,224,224,0.3)"} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       )}
     </div>
   );
 }
 
-export default function Tournaments() {
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["tournaments"], queryFn: () => getTournaments(true),
+export default function Reports() {
+  const [tab, setTab] = useState("club");    // "club" | "my"
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 20;
+
+  const clubQuery = useQuery({
+    queryKey: ["reports", "club", page],
+    queryFn: () => getReports(page),
+    enabled: tab === "club",
+    keepPreviousData: true,
   });
 
-  if (isLoading) return <Loader />;
-  if (isError)   return <ErrorMessage error={error} />;
+  const myQuery = useQuery({
+    queryKey: ["reports", "my", page],
+    queryFn: () => getMyReports(page),
+    enabled: tab === "my",
+    keepPreviousData: true,
+  });
+
+  const query   = tab === "club" ? clubQuery : myQuery;
+  const reports = query.data || [];
 
   return (
     <div>
-      <h1>Турниры</h1>
-      {!data?.length
-        ? <div className="empty-state">
-            <div className="empty-icon">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
-                <path d="M6 9H4a2 2 0 000 4h2"/><path d="M18 9h2a2 2 0 010 4h-2"/>
-                <path d="M6 9V5h12v4"/><path d="M6 13c0 3.3 2.7 6 6 6s6-2.7 6-6"/>
-                <path d="M12 19v2M9 21h6"/>
-              </svg>
+      <h1>Отчёты</h1>
+
+      {/* Переключатель */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {["club", "my"].map(t => (
+          <button
+            key={t}
+            className={`btn ${tab === t ? "btn-primary" : "btn-secondary"}`}
+            style={{ flex: 1, fontSize: 13 }}
+            onClick={() => { setTab(t); setPage(0); }}
+          >
+            {t === "club" ? "🌍 Клуб" : "📋 Мои"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "my" && <StatsBlock />}
+      {query.isLoading && <Loader />}
+      {query.isError   && <ErrorMessage error={query.error} />}
+
+      {!query.isLoading && !query.isError && (
+        <>
+          {reports.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.2">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10 9 9 9 8 9"/>
+                </svg>
+              </div>
+              <div className="empty-title">
+                {tab === "my" ? "Твоих отчётов пока нет" : "Нет отчётов"}
+              </div>
+              {tab === "my" && (
+                <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 4 }}>
+                  Публикуй #отчет в группе
+                </div>
+              )}
             </div>
-            <div className="empty-title">Нет активных турниров</div>
-            <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 4 }}>Турниры создаёт администратор</div>
-          </div>
-        : data.map(t => <TournamentCard key={t.id} t={t} />)
-      }
+          ) : (
+            <>
+              {reports.map(r => (
+                <ReportCard key={r.id} r={r} showAuthor={tab === "club"} />
+              ))}
+
+              {/* Пагинация */}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
+                {page > 0 && (
+                  <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                    onClick={() => setPage(p => p - 1)}>
+                    ← Назад
+                  </button>
+                )}
+                {reports.length === PAGE_SIZE && (
+                  <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                    onClick={() => setPage(p => p + 1)}>
+                    Ещё →
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
