@@ -83,12 +83,10 @@ def _tour_confirm_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def _tour_info_kb(tournament_id: int, joined: bool) -> InlineKeyboardMarkup:
+def _tour_info_kb(tournament_id: int, joined: bool = False) -> InlineKeyboardMarkup:
+    """Кнопка участия всегда активна — персональный статус через cb.answer."""
     builder = InlineKeyboardBuilder()
-    if joined:
-        builder.button(text="✅ Ты участвуешь", callback_data="noop")
-    else:
-        builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
+    builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
     builder.button(text="📊 Таблица", callback_data=f"tour_table:{tournament_id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -358,14 +356,9 @@ async def cb_join_tournament(cb: CallbackQuery) -> None:
         await cb.answer("Что-то пошло не так, попробуй позже.", show_alert=True)
         return
 
-    try:
-        await cb.message.edit_reply_markup(
-            reply_markup=_tour_info_kb(tournament_id, joined=True)
-        )
-    except Exception:
-        pass
-
-    await cb.answer("🏆 Ты в деле! Удачи!")
+    # Не редактируем групповое сообщение — кнопка общая для всех
+    # Каждый видит свой статус через personal answer
+    await cb.answer("🏆 Ты в деле! Удачи!", show_alert=True)
 
     # Уведомление в личку
     tournament = await get_tournament(tournament_id)
