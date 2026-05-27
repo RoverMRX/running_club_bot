@@ -410,7 +410,7 @@ async def cmd_post_app(message: Message) -> None:
     # url-кнопка открывает личку с ботом — там уже есть кнопка меню с WebApp
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text="🏃 IT БЕГОТНЯ — открыть",
+            text="🏃 Открыть",
             url=f"https://t.me/{bot_username}",
         )
     ]])
