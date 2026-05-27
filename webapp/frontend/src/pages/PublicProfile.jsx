@@ -69,10 +69,28 @@ export default function PublicProfile({ tg_id, onBack }) {
     queryKey: ["public-profile", tg_id],
     queryFn: () => getPublicProfile(tg_id),
     staleTime: 30_000,
+    enabled: !!tg_id,
   });
 
+  if (!tg_id) return (
+    <div>
+      <button className="btn btn-secondary"
+        style={{ width: "auto", padding: "7px 14px", marginBottom: 16, fontSize: 13 }}
+        onClick={onBack}>← Назад</button>
+      <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 20 }}>
+        Профиль не найден
+      </div>
+    </div>
+  );
   if (isLoading) return <Loader />;
-  if (isError)   return <ErrorMessage error={error} />;
+  if (isError) return (
+    <div>
+      <button className="btn btn-secondary"
+        style={{ width: "auto", padding: "7px 14px", marginBottom: 16, fontSize: 13 }}
+        onClick={onBack}>← Назад</button>
+      <ErrorMessage error={error} />
+    </div>
+  );
 
   const earned = data.achievements.filter(a => a.earned);
   const grouped = {};
