@@ -3,7 +3,7 @@
 import logging
 from aiogram.enums import ChatType
 from aiogram import Router, types, F
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from sqlalchemy import select
@@ -401,28 +401,3 @@ async def cb_noop(callback: types.CallbackQuery):
     """Пустой callback — ничего не делаем."""
     await callback.answer()
 
-# ─────────────────────────────────────────
-# Fallback — восстановить клавиатуру
-# ─────────────────────────────────────────
-
-# Тексты всех известных кнопок — fallback их не трогает
-_KNOWN_BUTTONS = {
-    "⚙️ Администрирование", "⬅️ Главное меню", "❌ Отмена", "🚫 Отмена",
-    "🎯 Челленджи", "📅 Мероприятия", "👤 Мой профиль", "📊 Таблица лидеров",
-    "❓ Помощь", "🏃 Создать челлендж", "🤝 Челленджи клуба", "📋 Мои челленджи",
-    "📋 Ближайшие мероприятия", "➕ Создать мероприятие",
-    "🗂 На модерации", "📐 Шаблоны мероприятий", "🏆 Создать турнир",
-    "🎯 Запросы по челленджам", "🛠 Управление контентом", "👥 Модераторы",
-}
-
-@router.message(F.chat.type == "private", StateFilter(None))
-async def fallback_restore_kb(message: types.Message):
-    """Восстанавливаем клавиатуру только если написано что-то неизвестное."""
-    if not message.text:
-        return
-    if message.text.startswith("/"):
-        return
-    if message.text in _KNOWN_BUTTONS:
-        return
-    kb = await main_kb_for(message.from_user.id)
-    await message.answer("Главное меню", reply_markup=kb)
