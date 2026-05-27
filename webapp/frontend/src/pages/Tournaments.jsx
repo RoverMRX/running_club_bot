@@ -60,7 +60,7 @@ function Leaderboard({ leaderboard, type }) {
   );
 }
 
-function TournamentCard({ t }) {
+function TournamentCard({ t, onUserClick }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
 

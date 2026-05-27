@@ -768,7 +768,6 @@ function ChallengeList({ queryKey, queryFn, paginated = false, emptyText }) {
   );
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
-  if (viewUser)  return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
   if (!data?.length) return (
     <div className="empty-state">
       <div className="empty-icon">
