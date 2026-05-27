@@ -118,7 +118,7 @@ async def get_profile(tg_id: int) -> dict:
             'joined_challenges': joined_challenges,
             'recent_reports': recent_reports,
             'pr': pr.best_km if pr else 0.0,
-            'level': user.level,
+            'level': calc_level(user.xp),
             'xp': user.xp,
             'season_xp': user.season_xp,
             'streak': user.streak,
