@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getReports, getMyReports, getMyStats } from "../api";
+import { getMyReports, getMyStats } from "../api";
 import Loader from "../components/Loader";
 import ErrorMessage from "../components/ErrorMessage";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
-
-// ─── Утилиты ─────────────────────────────────────────────────
 
 function fmtDate(dt) {
   return new Date(dt).toLocaleString("ru", {
@@ -14,7 +12,6 @@ function fmtDate(dt) {
   });
 }
 
-/** Форматирует секунды → ЧЧ:ММ:СС или ММ:СС */
 function fmtDuration(sec) {
   if (!sec) return null;
   const h  = Math.floor(sec / 3600);
@@ -24,65 +21,10 @@ function fmtDuration(sec) {
   return `${mn}:${String(sc).padStart(2, "0")}`;
 }
 
-// ─── Одна карточка отчёта ─────────────────────────────────────
-
-function ReportCard({ r, showAuthor = true }) {
-  const timeStr = fmtDuration(r.duration_sec);
-
-  let statusBadge;
-  if (r.is_approved) {
-    statusBadge = (
-      <span className="badge badge-active" style={{ fontSize: 11 }}>✅ Одобрен</span>
-    );
-  } else if (r.is_rejected) {
-    statusBadge = (
-      <span className="badge" style={{ background: "var(--danger)", fontSize: 11 }}>❌ Отклонён</span>
-    );
-  } else {
-    statusBadge = (
-      <span className="badge" style={{ background: "var(--warning)", fontSize: 11 }}>⏳ На проверке</span>
-    );
-  }
-
-  return (
-    <div className="card" style={{ padding: "12px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-        <div>
-          {showAuthor && (
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
-              {r.username ? `@${r.username}` : r.school_nick}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)" }}>
-              {r.km.toFixed(1)}
-            </span>
-            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>км</span>
-            {timeStr && (
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                ⏱ {timeStr}
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          {statusBadge}
-          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {fmtDate(r.created_at)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Главный компонент ────────────────────────────────────────
-
-
-// ─── График статистики ────────────────────────────────────────
+// ─── Статистика + график ──────────────────────────────────────
 
 function StatsBlock() {
-  const [view, setView] = useState("weekly"); // "daily" | "weekly"
+  const [view, setView] = useState("weekly");
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["reports-stats"],
@@ -103,155 +45,159 @@ function StatsBlock() {
   const maxKm = Math.max(...chartData.map(d => d.km), 1);
 
   return (
-    <div className="card" style={{ marginBottom: 12 }}>
+    <div>
       {/* Итоги */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 12 }}>
         {[
-          { label: "Пробежек",   value: data.total_runs },
-          { label: "Всего км",   value: data.total_km.toFixed(1) },
-          { label: "Лучшая",     value: `${data.best_km.toFixed(1)} км` },
-          { label: "Средняя",    value: `${data.avg_km.toFixed(1)} км` },
+          { label: "Всего пробежек", value: data.total_runs, icon: "🏃" },
+          { label: "Всего км",       value: `${data.total_km.toFixed(1)} км`, icon: "📍" },
+          { label: "Лучшая пробежка",value: `${data.best_km.toFixed(1)} км`, icon: "🏆" },
+          { label: "Средняя",        value: `${data.avg_km.toFixed(1)} км`, icon: "📊" },
         ].map(s => (
-          <div key={s.label} style={{ textAlign: "center" }}>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{s.value}</div>
+          <div key={s.label} className="card" style={{ padding: "12px 16px", marginBottom: 0 }}>
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{s.value}</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Переключатель */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        {[["weekly","По неделям"],["daily","По дням"]].map(([v, l]) => (
-          <button key={v} onClick={() => setView(v)}
-            style={{
-              fontSize: 12, padding: "4px 10px", borderRadius: 20, cursor: "pointer",
-              border: "1px solid var(--border)",
-              background: view === v ? "var(--accent)" : "var(--bg-input)",
-              color: view === v ? "#000" : "var(--text)",
-              fontWeight: view === v ? 600 : 400,
-            }}>{l}</button>
-        ))}
-      </div>
-
       {/* График */}
-      {chartData.length === 0 ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: "20px 0" }}>
-          Нет данных
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>График пробегов</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["weekly", "Недели"], ["daily", "Дни"]].map(([v, l]) => (
+              <button key={v} onClick={() => setView(v)} style={{
+                fontSize: 11, padding: "3px 8px", borderRadius: 20, cursor: "pointer",
+                border: "1px solid var(--border)",
+                background: view === v ? "var(--accent)" : "var(--bg-input)",
+                color: view === v ? "#000" : "var(--text)",
+                fontWeight: view === v ? 600 : 400,
+              }}>{l}</button>
+            ))}
+          </div>
         </div>
-      ) : (
-        <ResponsiveContainer width="100%" height={160}>
-          <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text-dim)" }}
-              interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10, fill: "var(--text-dim)" }} />
-            <Tooltip
-              formatter={(val) => [`${val} км`, "Пробег"]}
-              contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)",
-                borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: "var(--text-muted)" }}
-            />
-            <Bar dataKey="km" radius={[4, 4, 0, 0]}>
-              {chartData.map((entry, i) => (
-                <Cell key={i}
-                  fill={entry.km >= maxKm * 0.8 ? "var(--accent)" : "rgba(224,224,224,0.3)"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      )}
+
+        {chartData.length === 0 ? (
+          <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: "20px 0" }}>
+            Нет данных за этот период
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text-dim)" }}
+                interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 10, fill: "var(--text-dim)" }} />
+              <Tooltip
+                formatter={(val) => [`${val} км`, "Пробег"]}
+                contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+                  borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: "var(--text-muted)" }}
+              />
+              <Bar dataKey="km" radius={[4, 4, 0, 0]}>
+                {chartData.map((entry, i) => (
+                  <Cell key={i}
+                    fill={entry.km >= maxKm * 0.8 ? "var(--accent)" : "rgba(224,224,224,0.25)"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 }
 
-export default function Reports() {
-  const [tab, setTab] = useState("club");    // "club" | "my"
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 20;
+// ─── История пробежек ─────────────────────────────────────────
 
-  const clubQuery = useQuery({
-    queryKey: ["reports", "club", page],
-    queryFn: () => getReports(page),
-    enabled: tab === "club",
-    keepPreviousData: true,
-  });
+function ReportRow({ r }) {
+  const timeStr = fmtDuration(r.duration_sec);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "10px 0",
+      borderBottom: "1px solid var(--border)",
+    }}>
+      <div style={{ fontSize: 22, flexShrink: 0 }}>🏃</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{r.km.toFixed(1)}</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>км</span>
+          {timeStr && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>· ⏱ {timeStr}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>{fmtDate(r.created_at)}</div>
+      </div>
+      <div style={{ flexShrink: 0 }}>
+        {r.is_approved
+          ? <span style={{ fontSize: 11, color: "var(--success)" }}>✅</span>
+          : r.is_rejected
+          ? <span style={{ fontSize: 11, color: "var(--danger)" }}>❌</span>
+          : <span style={{ fontSize: 11, color: "var(--warning)" }}>⏳</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Главный компонент ────────────────────────────────────────
+
+export default function Reports() {
+  const [page, setPage] = useState(0);
+  const [tab, setTab]   = useState("stats");
+  const PAGE_SIZE = 20;
 
   const myQuery = useQuery({
     queryKey: ["reports", "my", page],
     queryFn: () => getMyReports(page),
-    enabled: tab === "my",
-    keepPreviousData: true,
+    enabled: tab === "history",
+    staleTime: 30_000,
   });
 
-  const query   = tab === "club" ? clubQuery : myQuery;
-  const reports = query.data || [];
+  const reports = myQuery.data || [];
 
   return (
     <div>
-      <h1>Отчёты</h1>
+      <h1 style={{ marginBottom: 16 }}>Мои пробежки</h1>
 
-      {/* Переключатель */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {["club", "my"].map(t => (
-          <button
-            key={t}
-            className={`btn ${tab === t ? "btn-primary" : "btn-secondary"}`}
-            style={{ flex: 1, fontSize: 13 }}
-            onClick={() => { setTab(t); setPage(0); }}
-          >
-            {t === "club" ? "🌍 Клуб" : "📋 Мои"}
-          </button>
-        ))}
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        <button className={"tab" + (tab === "stats"   ? " active" : "")} onClick={() => setTab("stats")}>
+          📊 Статистика
+        </button>
+        <button className={"tab" + (tab === "history" ? " active" : "")} onClick={() => setTab("history")}>
+          📋 История
+        </button>
       </div>
 
-      {tab === "my" && <StatsBlock />}
-      {query.isLoading && <Loader />}
-      {query.isError   && <ErrorMessage error={query.error} />}
+      {tab === "stats" && <StatsBlock />}
 
-      {!query.isLoading && !query.isError && (
+      {tab === "history" && (
         <>
-          {reports.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.2">
-                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <polyline points="10 9 9 9 8 9"/>
-                </svg>
-              </div>
-              <div className="empty-title">
-                {tab === "my" ? "Твоих отчётов пока нет" : "Нет отчётов"}
-              </div>
-              {tab === "my" && (
+          {myQuery.isLoading && <Loader />}
+          {myQuery.isError   && <ErrorMessage error={myQuery.error} />}
+          {!myQuery.isLoading && !myQuery.isError && (
+            reports.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">🏃</div>
+                <div className="empty-title">Пробежек пока нет</div>
                 <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 4 }}>
                   Публикуй #отчет в группе
                 </div>
-              )}
-            </div>
-          ) : (
-            <>
-              {reports.map(r => (
-                <ReportCard key={r.id} r={r} showAuthor={tab === "club"} />
-              ))}
-
-              {/* Пагинация */}
-              <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
-                {page > 0 && (
-                  <button className="btn btn-secondary" style={{ fontSize: 13 }}
-                    onClick={() => setPage(p => p - 1)}>
-                    ← Назад
-                  </button>
-                )}
-                {reports.length === PAGE_SIZE && (
-                  <button className="btn btn-secondary" style={{ fontSize: 13 }}
-                    onClick={() => setPage(p => p + 1)}>
-                    Ещё →
-                  </button>
-                )}
               </div>
-            </>
+            ) : (
+              <div className="card" style={{ padding: "0 16px" }}>
+                {reports.map(r => <ReportRow key={r.id} r={r} />)}
+                <div style={{ display: "flex", gap: 8, padding: "12px 0", justifyContent: "center" }}>
+                  {page > 0 && (
+                    <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                      onClick={() => setPage(p => p - 1)}>← Назад</button>
+                  )}
+                  {reports.length === PAGE_SIZE && (
+                    <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                      onClick={() => setPage(p => p + 1)}>Ещё →</button>
+                  )}
+                </div>
+              </div>
+            )
           )}
         </>
       )}

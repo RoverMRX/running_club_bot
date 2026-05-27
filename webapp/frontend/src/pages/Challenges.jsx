@@ -122,7 +122,7 @@ function ProgressBar({ ch, style }) {
 
 // ─── Детальная карточка ──────────────────────────────────────
 
-function ChallengeDetail({ id, onBack }) {
+function ChallengeDetail({ id, onBack, onUserClick }) {
   const qc = useQueryClient();
   const [penalty, setPenalty] = useState("");
   const [showJoinForm, setShowJoinForm] = useState(false);
@@ -134,8 +134,6 @@ function ChallengeDetail({ id, onBack }) {
   const [showSurrender, setShowSurrender] = useState(false);
   const [surrenderCountdown, setSurrenderCountdown] = useState(0);
   const surrenderTimer = useRef(null);
-  const [viewUser, setViewUser] = useState(null);
-
   const { data: ch, isLoading, isError, error } = useQuery({
     queryKey: ["challenge", id],
     queryFn: () => getChallenge(id),
@@ -160,7 +158,6 @@ function ChallengeDetail({ id, onBack }) {
 
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
-  if (viewUser)  return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
 
   const pct = progressPct(ch);
 
@@ -472,7 +469,7 @@ function ChallengeDetail({ id, onBack }) {
                 : p.result === "closed" ? "🏁 закрыт" : null;
               return (
                 <div key={p.user_id}
-                onClick={() => setViewUser(p.user_id)}
+                onClick={() => onUserClick && onUserClick(p.user_id)}
                 style={{
                   padding: "10px 16px",
                   borderBottom: i < ch.participants.length - 1 ? "1px solid var(--border)" : "none",
@@ -746,7 +743,7 @@ function CreateForm({ onSuccess }) {
 
 // ─── Список с пагинацией ─────────────────────────────────────
 
-function ChallengeList({ queryKey, queryFn, paginated = false, emptyText }) {
+function ChallengeList({ queryKey, queryFn, paginated = false, emptyText, onUserClick }) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(null);
   const PAGE_SIZE = 10;
@@ -764,7 +761,7 @@ function ChallengeList({ queryKey, queryFn, paginated = false, emptyText }) {
   });
 
   if (selected !== null) return (
-    <ChallengeDetail id={selected} onBack={() => setSelected(null)} />
+    <ChallengeDetail id={selected} onBack={() => setSelected(null)} onUserClick={onUserClick} />
   );
   if (isLoading) return <Loader />;
   if (isError)   return <ErrorMessage error={error} />;
@@ -810,8 +807,10 @@ function ChallengeList({ queryKey, queryFn, paginated = false, emptyText }) {
 export default function Challenges() {
   const [tab, setTab]       = useState("my");
   const [create, setCreate] = useState(false);
+  const [viewUser, setViewUser] = useState(null);
 
-  if (create) return <CreateForm onSuccess={() => setCreate(false)} />;
+  if (create)    return <CreateForm onSuccess={() => setCreate(false)} />;
+  if (viewUser)  return <PublicProfile tg_id={viewUser} onBack={() => setViewUser(null)} />;
 
   return (
     <div>
@@ -836,6 +835,7 @@ export default function Challenges() {
           queryKey="challenges-my"
           queryFn={getMyChallenges}
           emptyText="Нет активных челленджей"
+          onUserClick={setViewUser}
         />
       )}
       {tab === "club" && (
@@ -844,6 +844,7 @@ export default function Challenges() {
           queryFn={getClubChallenges}
           paginated
           emptyText="Нет публичных челленджей"
+          onUserClick={setViewUser}
         />
       )}
       {tab === "history" && (
@@ -851,6 +852,7 @@ export default function Challenges() {
           queryKey="challenges-history"
           queryFn={getMyChallengesHistory}
           emptyText="История пуста"
+          onUserClick={setViewUser}
         />
       )}
     </div>
