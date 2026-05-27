@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PublicProfile from "./PublicProfile";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getTournaments, getTournamentsArchive, joinTournament } from "../api";
 import Loader from "../components/Loader";

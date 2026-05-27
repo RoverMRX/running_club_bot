@@ -92,9 +92,18 @@ export default function PublicProfile({ tg_id, onBack }) {
     </div>
   );
 
-  const earned = data.achievements.filter(a => a.earned);
+  if (!data) return (
+    <div>
+      <button className="btn btn-secondary"
+        style={{ width: "auto", padding: "7px 14px", marginBottom: 16, fontSize: 13 }}
+        onClick={onBack}>← Назад</button>
+      <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 20 }}>Нет данных</div>
+    </div>
+  );
+
+  const earned = (data.achievements || []).filter(a => a.earned);
   const grouped = {};
-  for (const a of data.achievements) {
+  for (const a of (data.achievements || [])) {
     if (!grouped[a.category]) grouped[a.category] = [];
     grouped[a.category].push(a);
   }
@@ -127,8 +136,8 @@ export default function PublicProfile({ tg_id, onBack }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
           {[
             { label: "Пробежек", value: data.total_runs },
-            { label: "Всего км", value: `${data.total_km.toFixed(1)}` },
-            { label: "Лучшая",   value: `${data.best_km.toFixed(1)} км` },
+            { label: "Всего км", value: `${(data.total_km || 0).toFixed(1)}` },
+            { label: "Лучшая",   value: `${(data.best_km || 0).toFixed(1)} км` },
           ].map(s => (
             <div key={s.label} style={{ textAlign: "center", background: "var(--bg-input)",
               borderRadius: 8, padding: "8px 4px" }}>
