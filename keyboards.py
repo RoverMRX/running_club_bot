@@ -289,9 +289,12 @@ def get_challenge_link_kb(
 # ─── Турниры ─────────────────────────────────────────────────────────────────
 
 def get_tournament_kb(tournament_id: int, joined: bool = False) -> InlineKeyboardMarkup:
-    """Кнопка всегда показывает 'Принять вызов' — персональный статус через cb.answer."""
+    """joined=False: кнопка участия. joined=True: убрана, остаётся таблица."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
+    if not joined:
+        builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
+    builder.button(text="📊 Таблица", callback_data=f"tour_table:{tournament_id}")
+    builder.adjust(1)
     return builder.as_markup()
 
 

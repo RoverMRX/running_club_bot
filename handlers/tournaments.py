@@ -84,9 +84,13 @@ def _tour_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def _tour_info_kb(tournament_id: int, joined: bool = False) -> InlineKeyboardMarkup:
-    """Кнопка участия всегда активна — персональный статус через cb.answer."""
+    """
+    joined=False (по умолчанию): кнопки "Принять вызов" + "Таблица"
+    joined=True: только "📊 Таблица" — кнопка участия убрана для всех
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
+    if not joined:
+        builder.button(text="🏆 Принять вызов", callback_data=f"tour_join:{tournament_id}")
     builder.button(text="📊 Таблица", callback_data=f"tour_table:{tournament_id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -360,8 +364,6 @@ async def cb_join_tournament(cb: CallbackQuery) -> None:
         await cb.answer("Что-то пошло не так, попробуй позже.", show_alert=True)
         return
 
-    # Не редактируем групповое сообщение — кнопка общая для всех
-    # Каждый видит свой статус через personal answer
     await cb.answer("🏆 Ты в деле! Удачи!", show_alert=True)
 
     # Уведомление в личку
