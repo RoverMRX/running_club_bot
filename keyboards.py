@@ -80,7 +80,7 @@ def get_admin_main_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📐 Шаблоны мероприятий")],
             [KeyboardButton(text="🏆 Создать турнир")],
             [KeyboardButton(text="🎯 Запросы по челленджам")],
-            [KeyboardButton(text="🗑 Управление челленджами")],
+            [KeyboardButton(text="🛠 Управление контентом")],
             [KeyboardButton(text="👥 Модераторы")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],

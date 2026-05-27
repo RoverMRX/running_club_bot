@@ -521,6 +521,22 @@ async def cmd_set_menu_button(message: Message) -> None:
 # Управление челленджами (удаление)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@router.message(F.text == "🛠 Управление контентом")
+async def cmd_manage_content(message: Message) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎯 Челленджи",    callback_data="mgmt:challenges:active")
+    kb.button(text="📅 Мероприятия",  callback_data="mgmt:events:active")
+    kb.button(text="🏆 Турниры",      callback_data="mgmt:tournaments:active")
+    kb.adjust(1)
+    await message.answer(
+        "🛠 <b>Управление контентом</b>\n\nВыбери раздел:",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+
+
 @router.message(F.text == "🗑 Управление челленджами")
 async def cmd_manage_challenges(message: Message) -> None:
     if not _is_admin(message.from_user.id):
@@ -730,3 +746,267 @@ async def cb_adm_ch_delete_confirm(call: CallbackQuery) -> None:
 async def cb_adm_ch_close_menu(call: CallbackQuery) -> None:
     await call.message.delete()
     await call.answer()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# УНИВЕРСАЛЬНОЕ УПРАВЛЕНИЕ КОНТЕНТОМ  (mgmt: prefix)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mgmt_filter_kb(section: str, current: str):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    filters = [("active","🟢 Активные"), ("closed","⚫ Закрытые"), ("all","📋 Все")]
+    for val, label in filters:
+        text = f"• {label}" if val == current else label
+        kb.button(text=text, callback_data=f"mgmt:{section}:{val}")
+    kb.adjust(3)
+    return kb
+
+
+@router.callback_query(F.data.startswith("mgmt:"))
+async def cb_mgmt_list(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, section, filt = call.data.split(":")
+
+    from sqlalchemy import select as _sel
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        if section == "challenges":
+            from models import Challenge as _M
+            q = _sel(_M).where(_M.parent_id.is_(None))
+            if filt == "active":  q = q.where(_M.is_active == True)
+            elif filt == "closed": q = q.where(_M.is_active == False)
+            items = (await session.execute(q.order_by(_M.created_at.desc()).limit(30))).scalars().all()
+            def item_line(x):
+                s = "🟢" if x.is_active else "⚫"
+                r = f" [{x.result}]" if x.result else ""
+                return f"{s} {x.title}{r} (id={x.id})", f"mgmt_item:ch:{x.id}"
+
+        elif section == "events":
+            from models import Event as _M
+            q = _sel(_M)
+            if filt == "active":  q = q.where(_M.is_active == True)
+            elif filt == "closed": q = q.where(_M.is_active == False)
+            items = (await session.execute(q.order_by(_M.event_date.desc()).limit(30))).scalars().all()
+            def item_line(x):
+                from datetime import datetime as _dt
+                s = "🟢" if x.is_active else "⚫"
+                d = x.event_date.strftime("%d.%m") if x.event_date else "?"
+                return f"{s} {x.title} ({d})", f"mgmt_item:ev:{x.id}"
+
+        elif section == "tournaments":
+            from models import WeeklyTournament as _M
+            q = _sel(_M)
+            if filt == "active":  q = q.where(_M.is_active == True)
+            elif filt == "closed": q = q.where(_M.is_active == False)
+            items = (await session.execute(q.order_by(_M.start_date.desc()).limit(30))).scalars().all()
+            def item_line(x):
+                s = "🟢" if x.is_active else "⚫"
+                d = x.start_date.strftime("%d.%m") if x.start_date else "?"
+                return f"{s} {x.title} ({d})", f"mgmt_item:tr:{x.id}"
+
+        else:
+            await call.answer("Неизвестный раздел.")
+            return
+
+    TITLES = {"challenges": "🎯 Челленджи", "events": "📅 Мероприятия", "tournaments": "🏆 Турниры"}
+    kb = _mgmt_filter_kb(section, filt)
+
+    if not items:
+        kb.button(text="◀️ Назад", callback_data=f"mgmt_back")
+        kb.adjust(3, 1)
+        await call.message.edit_text(
+            f"{TITLES[section]} — нет записей",
+            reply_markup=kb.as_markup(), parse_mode="HTML"
+        )
+        await call.answer()
+        return
+
+    for item in items:
+        label, cb = item_line(item)
+        kb.button(text=label, callback_data=cb)
+    kb.button(text="◀️ Назад", callback_data="mgmt_back")
+    kb.adjust(3, *[1]*len(items), 1)
+
+    await call.message.edit_text(
+        f"<b>{TITLES[section]}</b> · {filt}",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "mgmt_back")
+async def cb_mgmt_back(call: CallbackQuery) -> None:
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎯 Челленджи",   callback_data="mgmt:challenges:active")
+    kb.button(text="📅 Мероприятия", callback_data="mgmt:events:active")
+    kb.button(text="🏆 Турниры",     callback_data="mgmt:tournaments:active")
+    kb.adjust(1)
+    await call.message.edit_text(
+        "🛠 <b>Управление контентом</b>\n\nВыбери раздел:",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("mgmt_item:"))
+async def cb_mgmt_item(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, kind, item_id = call.data.split(":")
+    item_id = int(item_id)
+
+    from sqlalchemy import select as _sel
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        if kind == "ch":
+            from models import Challenge as _M
+            obj = (await session.execute(_sel(_M).where(_M.id == item_id))).scalar_one_or_none()
+            if not obj: await call.answer("Не найдено."); return
+            section = "challenges"
+            status = "🟢 Активный" if obj.is_active else f"⚫ Закрыт [{obj.result or '—'}]"
+            parts_count = len([c for c in (obj.children or [])])
+            info = (f"<b>{obj.title}</b> (id={obj.id})\n"
+                    f"Тип: {obj.ch_type} · Статус: {status}\n"
+                    f"Участников: {parts_count}")
+
+        elif kind == "ev":
+            from models import Event as _M
+            obj = (await session.execute(_sel(_M).where(_M.id == item_id))).scalar_one_or_none()
+            if not obj: await call.answer("Не найдено."); return
+            section = "events"
+            status = "🟢 Активно" if obj.is_active else "⚫ Закрыто"
+            d = obj.event_date.strftime("%d.%m.%Y %H:%M") if obj.event_date else "?"
+            info = (f"<b>{obj.title}</b> (id={obj.id})\n"
+                    f"Дата: {d} · {status}\n"
+                    f"Участников: {len(obj.participants or [])}")
+
+        elif kind == "tr":
+            from models import WeeklyTournament as _M
+            obj = (await session.execute(_sel(_M).where(_M.id == item_id))).scalar_one_or_none()
+            if not obj: await call.answer("Не найдено."); return
+            section = "tournaments"
+            status = "🟢 Активный" if obj.is_active else "⚫ Завершён"
+            d_start = obj.start_date.strftime("%d.%m") if obj.start_date else "?"
+            d_end   = obj.end_date.strftime("%d.%m") if obj.end_date else "?"
+            info = (f"<b>{obj.title}</b> (id={obj.id})\n"
+                    f"{d_start} – {d_end} · {status}\n"
+                    f"Участников: {len(obj.participants or [])}")
+        else:
+            await call.answer(); return
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+
+    if obj.is_active:
+        kb.button(text="⛔ Деактивировать", callback_data=f"mgmt_toggle:{kind}:{item_id}:0")
+    else:
+        kb.button(text="✅ Активировать",   callback_data=f"mgmt_toggle:{kind}:{item_id}:1")
+
+    kb.button(text="🗑 Удалить",  callback_data=f"mgmt_delete_ask:{kind}:{item_id}")
+    kb.button(text="◀️ К списку", callback_data=f"mgmt:{section}:all")
+    kb.adjust(2, 1)
+
+    await call.message.edit_text(info, reply_markup=kb.as_markup(), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("mgmt_toggle:"))
+async def cb_mgmt_toggle(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, kind, item_id, state = call.data.split(":")
+    item_id, state = int(item_id), int(state)
+
+    from sqlalchemy import select as _sel
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        async with session.begin():
+            if kind == "ch":
+                from models import Challenge as _M
+            elif kind == "ev":
+                from models import Event as _M
+            else:
+                from models import WeeklyTournament as _M
+            obj = (await session.execute(_sel(_M).where(_M.id == item_id))).scalar_one_or_none()
+            if obj:
+                obj.is_active = bool(state)
+                if not state and kind == "ch":
+                    obj.result = "closed"
+
+    action = "активирован ✅" if state else "деактивирован ⛔"
+    await call.message.edit_text(
+        call.message.text + f"\n\n{action.capitalize()}.",
+        parse_mode="HTML"
+    )
+    await call.answer(f"{'Активирован' if state else 'Деактивирован'}.")
+
+
+@router.callback_query(F.data.startswith("mgmt_delete_ask:"))
+async def cb_mgmt_delete_ask(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, kind, item_id = call.data.split(":")
+    NAMES = {"ch": "челлендж", "ev": "мероприятие", "tr": "турнир"}
+    SECTIONS = {"ch": "challenges", "ev": "events", "tr": "tournaments"}
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚠️ Да, удалить",  callback_data=f"mgmt_delete_ok:{kind}:{item_id}")
+    kb.button(text="❌ Отмена",        callback_data=f"mgmt_item:{kind}:{item_id}")
+    kb.adjust(2)
+
+    await call.message.edit_text(
+        f"⚠️ Удалить {NAMES.get(kind, 'объект')} полностью?\n\n"
+        f"Связанные участники тоже будут удалены.\n<b>Отчёты сохранятся.</b>",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("mgmt_delete_ok:"))
+async def cb_mgmt_delete_ok(call: CallbackQuery) -> None:
+    if not _is_admin(call.from_user.id):
+        await call.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, kind, item_id = call.data.split(":")
+    item_id = int(item_id)
+
+    from sqlalchemy import delete as _del
+    from database import async_session as _sess
+
+    async with _sess() as session:
+        async with session.begin():
+            if kind == "ch":
+                from models import Challenge as _M
+                await session.execute(_del(_M).where(_M.parent_id == item_id))
+                await session.execute(_del(_M).where(_M.id == item_id))
+            elif kind == "ev":
+                from models import Event as _M, EventParticipant as _EP
+                await session.execute(_del(_EP).where(_EP.event_id == item_id))
+                await session.execute(_del(_M).where(_M.id == item_id))
+            elif kind == "tr":
+                from models import WeeklyTournament as _M, TournamentParticipant as _TP
+                await session.execute(_del(_TP).where(_TP.tournament_id == item_id))
+                await session.execute(_del(_M).where(_M.id == item_id))
+
+    NAMES = {"ch": "Челлендж", "ev": "Мероприятие", "tr": "Турнир"}
+    await call.message.edit_text(
+        f"🗑 <b>{NAMES.get(kind, 'Объект')} удалён.</b>",
+        parse_mode="HTML"
+    )
+    await call.answer("Удалено.")
